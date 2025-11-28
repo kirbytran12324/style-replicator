@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Union, List
+from typing import TYPE_CHECKING, Union, List, Type, Optional
 import sys
 
 
@@ -22,7 +22,61 @@ from diffusers import (
 )
 import torch
 import re
-from transformers import T5Tokenizer, T5EncoderModel, UMT5EncoderModel
+
+# Tokenizer: prefer T5Tokenizer, otherwise fall back to AutoTokenizer
+try:
+    from transformers import T5Tokenizer as _T5Tokenizer
+except Exception:
+    from transformers import AutoTokenizer as _T5Tokenizer  # type: ignore[assignment]
+T5Tokenizer = _T5Tokenizer
+
+# Encoder classes may not exist depending on transformers version
+T5EncoderModel: Optional[Type] = None
+UMT5EncoderModel: Optional[Type] = None
+MT5EncoderModel: Optional[Type] = None
+
+# Try to import T5EncoderModel from public API, then module path
+try:
+    from transformers import T5EncoderModel as _T5Enc
+    T5EncoderModel = _T5Enc
+except Exception:
+    try:
+        from transformers.models.t5 import T5EncoderModel as _T5Enc  # type: ignore[attr-defined]
+        T5EncoderModel = _T5Enc
+    except Exception:
+        T5EncoderModel = None
+
+# Prefer UMT5 if exported; otherwise fall back to MT5
+try:
+    from transformers import UMT5EncoderModel as _UMT5Enc
+    UMT5EncoderModel = _UMT5Enc
+except Exception:
+    UMT5EncoderModel = None
+
+if UMT5EncoderModel is None:
+    try:
+        from transformers import MT5EncoderModel as _MT5Enc
+        MT5EncoderModel = _MT5Enc
+    except Exception:
+        try:
+            from transformers.models.mt5 import MT5EncoderModel as _MT5Enc  # type: ignore[attr-defined]
+            MT5EncoderModel = _MT5Enc
+        except Exception:
+            MT5EncoderModel = None
+    # Alias UMT5 to MT5 if UMT5 is unavailable
+    UMT5EncoderModel = MT5EncoderModel
+
+
+def require_t5_like_encoder():
+    """
+    Call this before using T5/UMT5/MT5 encoders.
+    Raises a clear error if the installed transformers build lacks these classes.
+    """
+    if T5EncoderModel is None and UMT5EncoderModel is None:
+        raise ImportError(
+            "No T5-like encoder class available in the installed `transformers`. "
+            "Install a compatible version (e.g., transformers>=4.35,<5) or guard T5 features."
+        )
 
 SCHEDULER_LINEAR_START = 0.00085
 SCHEDULER_LINEAR_END = 0.0120

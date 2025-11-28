@@ -2,7 +2,7 @@ from functools import partial
 import inspect
 import weakref
 import torch
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union, Type
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.lora_special import LoRASpecialNetwork
 from diffusers import WanTransformer3DModel

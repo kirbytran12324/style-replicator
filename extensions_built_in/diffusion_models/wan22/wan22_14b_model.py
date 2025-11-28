@@ -1,6 +1,6 @@
 from functools import partial
 import os
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, Union, List, Type
 from typing_extensions import Self
 import torch
 import yaml
@@ -17,8 +17,19 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.util.quantize import quantize_model
 from .wan22_pipeline import Wan22Pipeline
-from diffusers import WanTransformer3DModel
+WanTransformer3DModel: Optional[Type] = None
+try:
+    from diffusers import WanTransformer3DModel as _Wan3D  # Available only in newer diffusers
+    WanTransformer3DModel = _Wan3D
+except Exception:
+    WanTransformer3DModel = None
 
+def require_wan3d_available() -> None:
+    if WanTransformer3DModel is None:
+        raise ImportError(
+            "WanTransformer3DModel is not available in the installed `diffusers`. "
+            "Upgrade `diffusers` or disable WAN‑3D features."
+        )
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
 

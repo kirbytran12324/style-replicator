@@ -76,7 +76,7 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
 
     if (isBrowser) {
       localStorage.setItem('AI_TOOLKIT_AUTH', token);
-      checkAuth();
+      await checkAuth();
     }
   };
 

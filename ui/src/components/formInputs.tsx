@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { CircleHelp } from 'lucide-react';
 import { getDoc } from '@/docs';
 import { openDoc } from '@/components/DocModal';
-import { ConfigDoc, GroupedSelectOption, SelectOption } from '@/types';
+import { ConfigDoc, GroupedSelectOption, SelectOption } from '@/utils/types';
 
 const Select = dynamic(() => import('react-select'), { ssr: false });
 
@@ -64,27 +64,27 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
   );
 });
 
-// 👇 Helpful for debugging
 TextInput.displayName = 'TextInput';
 
+// --- UPDATED INTERFACE ---
 export interface NumberInputProps extends InputProps {
   value: number | null;
   onChange: (value: number | null) => void;
   min?: number;
   max?: number;
+  disabled?: boolean; // <--- ADDED THIS
 }
 
 export const NumberInput = (props: NumberInputProps) => {
-  const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
+  // --- UPDATED DESTRUCTURING ---
+  const { label, value, onChange, placeholder, required, min, max, disabled, docKey = null } = props; // <--- ADDED disabled
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
 
-  // Add controlled internal state to properly handle partial inputs
   const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
 
-  // Sync internal state with prop value
   React.useEffect(() => {
     setInputValue(value ?? '');
   }, [value]);
@@ -105,40 +105,35 @@ export const NumberInput = (props: NumberInputProps) => {
         type="number"
         value={inputValue}
         onChange={e => {
+          if (disabled) return; // Prevent change if disabled
           const rawValue = e.target.value;
-
-          // Update the input display with the raw value
           setInputValue(rawValue);
 
-          // Handle empty or partial inputs
           if (rawValue === '' || rawValue === '-') {
-            // For empty or partial negative input, don't call onChange yet
             return;
           }
 
           const numValue = Number(rawValue);
 
-          // Only apply constraints and call onChange when we have a valid number
           if (!isNaN(numValue)) {
             let constrainedValue = numValue;
-
-            // Apply min/max constraints if they exist
             if (min !== undefined && constrainedValue < min) {
               constrainedValue = min;
             }
             if (max !== undefined && constrainedValue > max) {
               constrainedValue = max;
             }
-
             onChange(constrainedValue);
           }
         }}
-        className={inputClasses}
+        // --- UPDATED CLASSNAME AND PROP ---
+        className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
         placeholder={placeholder}
         required={required}
         min={min}
         max={max}
         step="any"
+        disabled={disabled}
       />
     </div>
   );
@@ -159,7 +154,6 @@ export const SelectInput = (props: SelectInputProps) => {
   }
   let selectedOption: SelectOption | undefined;
   if (options && options.length > 0) {
-    // see if grouped options
     if ('options' in options[0]) {
       selectedOption = (options as GroupedSelectOption[])
         .flatMap(group => group.options)
@@ -339,7 +333,6 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
       const width = rect.right - rect.left;
       if (!(width > 0)) return;
 
-      // Clamp ratio to [0, 1] so it can never flip ends.
       const ratioRaw = (clientX - rect.left) / width;
       const ratio = ratioRaw <= 0 ? 0 : ratioRaw >= 1 ? 1 : ratioRaw;
 
@@ -349,12 +342,10 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
     [min, max, step, onChange],
   );
 
-  // Mouse/touch pointer drag
   const onPointerDown = (e: React.PointerEvent) => {
     if (disabled) return;
     e.preventDefault();
 
-    // Capture the pointer so moves outside the element are still tracked correctly
     try {
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     } catch {}
@@ -368,7 +359,6 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
     };
     const handleUp = (ev: PointerEvent) => {
       setDragging(false);
-      // release capture if we got it
       try {
         (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
       } catch {}
@@ -403,22 +393,17 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
               disabled ? 'pointer-events-none' : 'cursor-pointer',
             )}
           >
-            {/* Thicker track */}
             <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-gray-800 border border-gray-700" />
-
-            {/* Fill */}
             <div
               className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-blue-600"
               style={{ width: `${percent}%` }}
             />
-
-            {/* Thumb */}
             <div
               onPointerDown={onPointerDown}
               className={classNames(
                 'absolute top-1/2 -translate-y-1/2 -ml-2',
                 'h-4 w-4 rounded-full bg-white shadow border border-gray-300 cursor-pointer',
-                'after:content-[""] after:absolute after:inset-[-6px] after:rounded-full after:bg-transparent', // expands hit area
+                'after:content-[""] after:absolute after:inset-[-6px] after:rounded-full after:bg-transparent',
                 dragging ? 'ring-2 ring-blue-600' : '',
               )}
               style={{ left: `calc(${percent}% )` }}

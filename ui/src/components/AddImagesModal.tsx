@@ -44,29 +44,33 @@ export default function AddImagesModal() {
       setUploadProgress(0);
 
       const formData = new FormData();
+      // Modal expects 'files' list
       acceptedFiles.forEach(file => {
         formData.append('files', file);
       });
-      formData.append('datasetName', addImagesModalInfo?.datasetName || '');
+      // Modal expects 'name' query param or form field for the dataset folder
+      formData.append('name', addImagesModalInfo?.datasetName || '');
 
       try {
+        // Calls Modal: POST /api/datasets/upload
         await apiClient.post(`/api/datasets/upload`, formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
           onUploadProgress: progressEvent => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-            setUploadProgress(percentCompleted);
+            if (progressEvent.total) {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                setUploadProgress(percentCompleted);
+            }
           },
-          timeout: 0, // Disable timeout
+          timeout: 0, // Disable timeout for large uploads
         });
 
         onDone();
       } catch (error) {
         console.error('Upload failed:', error);
-      } finally {
+        alert('Upload failed. Check console for details.');
         setIsUploading(false);
-        setUploadProgress(0);
       }
     },
     [addImagesModalInfo],

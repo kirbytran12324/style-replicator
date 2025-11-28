@@ -3,15 +3,10 @@
 import { useEffect, useState, useRef } from 'react';
 import { apiClient } from '@/utils/api';
 
-interface FileObject {
-  path: string;
-  size: number;
-}
-
+// Cleans ANSI escape codes (colors) if backend sends raw terminal output
 const clean = (text: string): string => {
-  // remove \x1B[A\x1B[A
-  text = text.replace(/\x1B\[A/g, '');
-  return text;
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
 };
 
 export default function useJobLog(jobID: string, reloadInterval: null | number = null) {
@@ -25,34 +20,34 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
       loadStatus = 'refreshing';
     }
     setStatus(loadStatus);
+
+    // Calls Modal: GET /api/jobs/{jobID}/log
     apiClient
       .get(`/api/jobs/${jobID}/log`)
       .then(res => res.data)
       .then(data => {
         if (data.log) {
-          let cleanLog = clean(data.log);
-          setLog(cleanLog);
+          setLog(clean(data.log));
         }
         setStatus('success');
         didInitialLoadRef.current = true;
       })
       .catch(error => {
-        console.error('Error fetching log:', error);
-        setStatus('error');
+        // Log file might not exist yet if job just started
+        if (error.response?.status !== 404) {
+             console.error('Error fetching log:', error);
+             setStatus('error');
+        }
       });
   };
 
   useEffect(() => {
+    if(!jobID) return;
     refresh();
 
     if (reloadInterval) {
-      const interval = setInterval(() => {
-        refresh();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
+      const interval = setInterval(refresh, reloadInterval);
+      return () => clearInterval(interval);
     }
   }, [jobID]);
 

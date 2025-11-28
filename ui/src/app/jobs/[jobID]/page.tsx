@@ -10,7 +10,7 @@ import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
-import { Job } from '@prisma/client';
+import { Job } from '@/utils/types';
 
 type PageKey = 'overview' | 'samples' | 'config';
 
@@ -62,7 +62,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           </Button>
         </div>
         <div>
-          <h1 className="text-lg">Job: {job?.name}</h1>
+          <h1 className="text-lg">Job: {job?.config_name}</h1>
         </div>
         <div className="flex-1"></div>
         {job && (

@@ -182,3 +182,17 @@ cython_debug/
 aitk_db.db
 /notes.md
 /data
+
+# --- Added for Cloudflare Deployment ---
+
+# Heavy Python artifacts
+wheelhouse/
+
+# Frontend (Next.js) specific ignores
+ui/node_modules/
+ui/.next/
+ui/.vercel/
+ui/out/
+ui/build/
+ui/.env.local
+ui/.env

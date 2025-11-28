@@ -78,7 +78,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
             isVideo(imageUrl) ? (
               <video
                 ref={videoRef}
-                src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                src={`/api/files/${encodeURIComponent(imageUrl)}`}
                 className="w-full h-full object-cover"
                 preload="none"
                 playsInline
@@ -88,7 +88,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
               />
             ) : (
               <img
-                src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                src={`/api/files/${encodeURIComponent(imageUrl)}`}
                 alt={alt}
                 onLoad={handleLoad}
                 loading="lazy"

@@ -1,3 +1,5 @@
+modal
+fastapi
 torchao==0.10.0
 safetensors
 git+https://github.com/jaretburkett/easy_dwpose.git

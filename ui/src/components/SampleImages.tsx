@@ -1,8 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
-import { Job } from '@prisma/client';
-import { JobConfig } from '@/types';
+import { JobConfig, Job } from '@/utils/types';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
@@ -25,7 +24,8 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
     try {
       const res = await apiClient.post('/api/zip', {
         zipTarget: 'samples',
-        jobName: job?.name,
+        // CHANGED: Use config_name instead of name, fallback to id if missing
+        jobName: job?.config_name || job?.job_id,
       });
 
       const zipPath = res.data.zipPath; // e.g. /mnt/Train2/out/ui/.../samples.zip
@@ -67,13 +67,19 @@ interface SampleImagesProps {
 }
 
 export default function SampleImages({ job }: SampleImagesProps) {
-  const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
+  // CHANGED: Use job_id to be explicit, though id is likely aliased in your hook
+  const { sampleImages, status, refreshSampleImages } = useSampleImages(job.job_id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const didFirstScroll = useRef(false);
+
   const numSamples = useMemo(() => {
-    if (job?.job_config) {
-      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+    // CHANGED: Cast to any because the local Job interface might not have job_config
+    // defined, and the python backend might not return it.
+    const jConfig = (job as any).job_config;
+
+    if (jConfig) {
+      const jobConfig = JSON.parse(jConfig) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
       const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
       const numSamples = sampleConfig.samples.length;
@@ -146,17 +152,12 @@ export default function SampleImages({ job }: SampleImagesProps) {
     );
   }, [status, sampleImages.length]);
 
-  // Use direct Tailwind class without string interpolation
-  // This way Tailwind can properly generate the class
-  // I hate this, but it's the only way to make it work
   const gridColsClass = useMemo(() => {
     const cols = Math.min(numSamples, 40);
 
     switch (cols) {
       case 1:
-        return 'grid-cols-1';
       case 2:
-        return 'grid-cols-2';
       case 3:
         return 'grid-cols-3';
       case 4:
@@ -234,13 +235,15 @@ export default function SampleImages({ job }: SampleImagesProps) {
       case 40:
         return 'grid-cols-40';
       default:
-        return 'grid-cols-1';
+        return 'grid-cols-3';
     }
   }, [numSamples]);
 
   const sampleConfig = useMemo(() => {
-    if (job?.job_config) {
-      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+    // CHANGED: Cast to any for the same reason
+    const jConfig = (job as any).job_config;
+    if (jConfig) {
+      const jobConfig = JSON.parse(jConfig) as JobConfig;
       return jobConfig.config.process[0].sample;
     }
     return null;
@@ -262,17 +265,36 @@ export default function SampleImages({ job }: SampleImagesProps) {
         {PageInfoContent}
         {sampleImages && (
           <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleImages.map((sample: string) => (
-              <SampleImageCard
-                key={sample}
-                imageUrl={sample}
-                numSamples={numSamples}
-                sampleImages={sampleImages}
-                alt="Sample Image"
-                onClick={() => setSelectedSamplePath(sample)}
-                observerRoot={containerRef.current}
-              />
-            ))}
+            {sampleImages.map((sample: string, idx: number) => {
+              const groupIndex = Math.floor(idx / numSamples);
+              const groupStart = groupIndex * numSamples;
+              const groupEnd = Math.min(groupStart + numSamples, sampleImages.length);
+              const groupSize = groupEnd - groupStart;
+              const isEndOfGroup = idx === groupEnd - 1;
+
+              const MIN_COLS = 3;
+              const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
+              const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
+
+              return (
+                <div key={sample} className="contents">
+                  <SampleImageCard
+                    imageUrl={sample}
+                    numSamples={numSamples}
+                    sampleImages={sampleImages}
+                    alt="Sample Image"
+                    onClick={() => setSelectedSamplePath(sample)}
+                    observerRoot={containerRef.current}
+                  />
+
+                  {isEndOfGroup &&
+                    padsNeeded > 0 &&
+                    Array.from({ length: padsNeeded }).map((_, i) => (
+                      <div key={`pad-${groupIndex}-${i}`} className="invisible" />
+                    ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

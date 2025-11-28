@@ -92,18 +92,18 @@ def standardize_images(images):
 
     return standardized_images
 
-def clean_caption(caption):
-    # this doesnt make any sense anymore in a world that is not based on comma seperated tokens
-    # # remove any newlines
-    # caption = caption.replace('\n', ', ')
-    # # remove new lines for all operating systems
-    # caption = caption.replace('\r', ', ')
-    # caption_split = caption.split(',')
-    # # remove empty strings
-    # caption_split = [p.strip() for p in caption_split if p.strip()]
-    # # join back together
-    # caption = ', '.join(caption_split)
-    return caption
+def clean_caption(caption: str) -> str:
+    for raw in caption.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        # Strip inline comments starting with '#'
+        line = line.split('#', 1)[0].strip()
+        # Collapse internal whitespace
+        line = ' '.join(line.split())
+        if line:
+            return line
+    return ""
 
 
 class CaptionMixin:

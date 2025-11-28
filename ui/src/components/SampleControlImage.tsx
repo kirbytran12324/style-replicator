@@ -27,7 +27,7 @@ export default function SampleControlImage({
 
   const backgroundUrl = useMemo(() => {
     if (localPreview) return localPreview;
-    if (src) return `/api/img/${encodeURIComponent(src)}`;
+    if (src) return `/api/files/${encodeURIComponent(src)}`;
     return null;
   }, [src, localPreview]);
 
@@ -44,7 +44,7 @@ export default function SampleControlImage({
       formData.append('files', file);
 
       try {
-        const resp = await apiClient.post(`/api/img/upload`, formData, {
+        const resp = await apiClient.post(`/api/upload`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: (evt: AxiosProgressEvent) => {
             const total = evt.total ?? 100;

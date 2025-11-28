@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
-import { SampleConfig, SampleItem } from '@/types';
+import { SampleConfig, SampleItem } from '@/utils/types';
 import { Cog } from 'lucide-react';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
@@ -46,10 +46,21 @@ export default function SampleImageViewer({
   const onCancel = useCallback(() => setIsOpen(false), []);
 
   const imgInfo = useMemo(() => {
+    // handle windows C:\\Apps\\AI-Toolkit\\AI-Toolkit\\output\\LoRA-Name\\samples\\1763563000704__000004000_0.jpg
     const ii = { filename: '', step: 0, promptIdx: 0 };
     if (imgPath) {
-      const filename = imgPath.split('/').pop();
-      if (!filename) return ii;
+      // handle windows
+      let filename: string | null = null;
+      if (imgPath.includes('\\')) {
+        const parts = imgPath.split('\\');
+        filename = parts[parts.length - 1];
+      } else {
+        filename = imgPath.split('/').pop() || null;
+      }
+      if (!filename) {
+        console.error('Filename could not be determined from imgPath:', imgPath);
+        return ii;
+      }
       ii.filename = filename;
       const parts = filename
         .split('.')[0]
@@ -58,6 +69,8 @@ export default function SampleImageViewer({
       if (parts.length === 3) {
         ii.step = parseInt(parts[1]);
         ii.promptIdx = parseInt(parts[2]);
+      } else {
+        console.error('Unexpected filename format for sample image:', filename);
       }
     }
     return ii;
@@ -189,7 +202,7 @@ export default function SampleImageViewer({
             <div className="overflow-hidden flex items-center justify-center">
               {imgPath && (
                 <img
-                  src={`/api/img/${encodeURIComponent(imgPath)}`}
+                  src={`/api/files/${encodeURIComponent(imgPath)}`}
                   alt="Sample Image"
                   className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
                 />
@@ -212,7 +225,7 @@ export default function SampleImageViewer({
                   {controlImages.map((ci, idx) => (
                     <img
                       key={idx}
-                      src={`/api/img/${encodeURIComponent(ci)}`}
+                      src={`/api/files/${encodeURIComponent(ci)}`}
                       alt={`Control ${idx + 1}`}
                       className="max-h-12 max-w-12 object-contain bg-black border border-gray-700 rounded"
                     />

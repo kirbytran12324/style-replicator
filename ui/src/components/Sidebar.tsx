@@ -1,12 +1,15 @@
+'use client';
+
 import Link from 'next/link';
-import { Home, Settings, BrainCircuit, Images, Plus } from 'lucide-react';
+import { Home, Settings, BrainCircuit, Images, Plus, Sparkles } from 'lucide-react';
 import { FaXTwitter, FaDiscord, FaYoutube } from 'react-icons/fa6';
 
 const Sidebar = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
-    { name: 'New Job', href: '/jobs/new', icon: Plus },
-    { name: 'Training Queue', href: '/jobs', icon: BrainCircuit },
+    { name: 'Train', href: '/train', icon: Plus }, // Renamed & Repointed
+    { name: 'Generate', href: '/generate', icon: Sparkles }, // New!
+    { name: 'Job History', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
@@ -16,62 +19,55 @@ const Sidebar = () => {
   const socialIconClass = 'w-5 h-5 text-gray-400 hover:text-white';
 
   return (
-    <div className="flex flex-col w-59 bg-gray-900 text-gray-100">
-      <div className="px-4 py-3">
-        <h1 className="text-l">
+    <div className="flex flex-col w-59 bg-gray-900 text-gray-100 h-full border-r border-gray-800">
+      <div className="px-4 py-4">
+        <Link href="/dashboard" className="text-l flex items-center">
+          {/* Ensure this image exists in /public or remove it */}
           <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-7 mr-3 inline" />
-          <span className="font-bold uppercase">Ostris</span>
-          <span className="ml-2 uppercase text-gray-300">AI-Toolkit</span>
-        </h1>
+          <span className="font-bold uppercase tracking-wider">Ostris</span>
+          <span className="ml-2 uppercase text-gray-400 text-xs mt-1">Toolkit</span>
+        </Link>
       </div>
-      <nav className="flex-1">
-        <ul className="px-2 py-4 space-y-2">
+      
+      <nav className="flex-1 px-2 py-4">
+        <ul className="space-y-1">
           {navigation.map(item => (
             <li key={item.name}>
               <Link
                 href={item.href}
-                className="flex items-center px-4 py-2 text-gray-300 hover:bg-gray-800 rounded-lg transition-colors"
+                className="flex items-center px-4 py-2.5 text-sm font-medium text-gray-300 hover:bg-gray-800 hover:text-white rounded-lg transition-all group"
               >
-                <item.icon className="w-5 h-5 mr-3" />
+                <item.icon className="w-5 h-5 mr-3 text-gray-400 group-hover:text-blue-400 transition-colors" />
                 {item.name}
               </Link>
             </li>
           ))}
         </ul>
       </nav>
-      <a
-        href="https://ostris.com/support"
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-center space-x-2 px-4 py-3"
-      >
-        <div className="min-w-[26px] min-h-[26px]">
-          <svg height="24" version="1.1" width="24" xmlns="http://www.w3.org/2000/svg">
-            <g transform="translate(0 -1028.4)">
-              <path
-                d="m7 1031.4c-1.5355 0-3.0784 0.5-4.25 1.7-2.3431 2.4-2.2788 6.1 0 8.5l9.25 9.8 9.25-9.8c2.279-2.4 2.343-6.1 0-8.5-2.343-2.3-6.157-2.3-8.5 0l-0.75 0.8-0.75-0.8c-1.172-1.2-2.7145-1.7-4.25-1.7z"
-                fill="#c0392b"
-              />
-            </g>
-          </svg>
-        </div>
-        <div className="uppercase text-gray-500 text-sm mb-2 flex-1 pt-2 pl-0">Support AI-Toolkit</div>
-      </a>
 
-      {/* Social links grid */}
-      <div className="px-1 py-1 border-t border-gray-800">
-        <div className="grid grid-cols-3 gap-4">
+      {/* Footer / Socials */}
+      <div className="p-4 border-t border-gray-800">
+        <a
+          href="https://ostris.com/support"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center space-x-2 text-xs text-gray-500 hover:text-gray-300 mb-4 transition-colors"
+        >
+          <div className="w-5 h-5 text-red-500">
+             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          </div>
+          <span>Support Development</span>
+        </a>
+
+        <div className="grid grid-cols-3 gap-2">
           <a href="https://discord.gg/VXmU2f5WEU" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaDiscord className={socialIconClass} />
-            {/* <span className="text-xs text-gray-500 mt-1">Discord</span> */}
           </a>
           <a href="https://www.youtube.com/@ostrisai" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaYoutube className={socialIconClass} />
-            {/* <span className="text-xs text-gray-500 mt-1">YouTube</span> */}
           </a>
           <a href="https://x.com/ostrisai" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaXTwitter className={socialIconClass} />
-            {/* <span className="text-xs text-gray-500 mt-1">X</span> */}
           </a>
         </div>
       </div>

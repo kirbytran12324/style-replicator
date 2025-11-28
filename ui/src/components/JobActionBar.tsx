@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Eye, Trash2, Pen, Play, Pause, Cog, X } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
-import { Job } from '@prisma/client';
+import { Job } from '@/utils/types';
 import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
@@ -29,16 +29,19 @@ export default function JobActionBar({
 
   if (!afterDelete) afterDelete = onRefresh;
 
+  // Helper to ensure we get a valid ID (backend sends job_id, local types might have id)
+  const jobId = job.job_id || job.id || '';
+
   return (
     <div className={`${className}`}>
       {canStart && (
         <Button
           onClick={async () => {
             if (!canStart) return;
-            await startJob(job.id);
+            await startJob(jobId);
             // start the queue as well
             if (autoStartQueue) {
-              await startQueue(job.gpu_ids);
+              await startQueue(job.gpu_ids || null);
             }
             if (onRefresh) onRefresh();
           }}
@@ -51,7 +54,7 @@ export default function JobActionBar({
         <Button
           onClick={async () => {
             if (!canRemoveFromQueue) return;
-            await markJobAsStopped(job.id);
+            await markJobAsStopped(jobId);
             if (onRefresh) onRefresh();
           }}
           className={`ml-2 opacity-100`}
@@ -65,11 +68,12 @@ export default function JobActionBar({
             if (!canStop) return;
             openConfirm({
               title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
+              // FIXED: Use config_name instead of name
+              message: `Are you sure you want to stop the job "${job.config_name}"? You CAN resume later.`,
               type: 'info',
               confirmText: 'Stop',
               onConfirm: async () => {
-                await stopJob(job.id);
+                await stopJob(jobId);
                 if (onRefresh) onRefresh();
               },
             });
@@ -80,18 +84,19 @@ export default function JobActionBar({
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/${jobId}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block">
           <Eye />
         </Link>
       )}
       {canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/new?id=${jobId}`} className="ml-2 hover:text-gray-100 inline-block">
           <Pen />
         </Link>
       )}
       <Button
         onClick={() => {
-          let message = `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`;
+          // FIXED: Use config_name instead of name
+          let message = `Are you sure you want to delete the job "${job.config_name}"? This will also permanently remove it from your disk.`;
           if (job.status === 'running') {
             message += ' WARNING: The job is currently running. You should stop it first if you can.';
           }
@@ -103,12 +108,12 @@ export default function JobActionBar({
             onConfirm: async () => {
               if (job.status === 'running') {
                 try {
-                  await stopJob(job.id);
+                  await stopJob(jobId);
                 } catch (e) {
                   console.error('Error stopping job before deleting:', e);
                 }
               }
-              await deleteJob(job.id);
+              await deleteJob(jobId);
               if (afterDelete) afterDelete();
             },
           });
@@ -124,7 +129,7 @@ export default function JobActionBar({
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
           <MenuItem>
-            <Link href={`/jobs/new?cloneId=${job.id}`} className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block">
+            <Link href={`/jobs/new?cloneId=${jobId}`} className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block">
               Clone Job
             </Link>
           </MenuItem>
@@ -139,7 +144,7 @@ export default function JobActionBar({
                   type: 'warning',
                   confirmText: 'Mark as Stopped',
                   onConfirm: async () => {
-                    await markJobAsStopped(job.id);
+                    await markJobAsStopped(jobId);
                     onRefresh && onRefresh();
                   },
                 });

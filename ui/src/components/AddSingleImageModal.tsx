@@ -7,14 +7,13 @@ import { useDropzone } from 'react-dropzone';
 import { apiClient } from '@/utils/api';
 
 export interface AddSingleImageModalState {
-
   onComplete?: (imagePath: string|null) => void;
 }
 
 export const addSingleImageModalState = createGlobalState<AddSingleImageModalState | null>(null);
 
 export const openAddImageModal = (onComplete: (imagePath: string|null) => void) => {
-  addSingleImageModalState.set({onComplete });
+  addSingleImageModalState.set({ onComplete });
 };
 
 export default function AddSingleImageModal() {
@@ -44,31 +43,36 @@ export default function AddSingleImageModal() {
       setUploadProgress(0);
 
       const formData = new FormData();
+      // The backend should handle generic single file upload at /api/upload
       acceptedFiles.forEach(file => {
-        formData.append('files', file);
+        formData.append('file', file);
       });
 
       try {
-        const resp = await apiClient.post(`/api/img/upload`, formData, {
+        const resp = await apiClient.post(`/api/upload`, formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
           onUploadProgress: progressEvent => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-            setUploadProgress(percentCompleted);
+            if (progressEvent.total) {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                setUploadProgress(percentCompleted);
+            }
           },
-          timeout: 0, // Disable timeout
+          timeout: 0,
         });
-        console.log('Upload successful:', resp.data);
 
-        onDone(resp.data.files[0] || null);
+        // Backend should return { path: "/root/modal_output/uploads/filename.jpg" }
+        onDone(resp.data.path || null);
       } catch (error) {
         console.error('Upload failed:', error);
+        alert('Upload failed');
       } finally {
         setIsUploading(false);
         setUploadProgress(0);
       }
     },
+    // Fixed: Updated dependency to match the local state variable name
     [addSingleImageModalInfo],
   );
 

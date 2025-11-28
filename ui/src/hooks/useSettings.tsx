@@ -1,36 +1,30 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/utils/api';
 
 export interface Settings {
   HF_TOKEN: string;
-  TRAINING_FOLDER: string;
-  DATASETS_FOLDER: string;
 }
 
 export default function useSettings() {
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<Settings>({
     HF_TOKEN: '',
-    TRAINING_FOLDER: '',
-    DATASETS_FOLDER: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
+
   useEffect(() => {
-    apiClient
-      .get('/api/settings')
-      .then(res => res.data)
-      .then(data => {
-        console.log('Settings:', data);
-        setSettings({
-          HF_TOKEN: data.HF_TOKEN || '',
-          TRAINING_FOLDER: data.TRAINING_FOLDER || '',
-          DATASETS_FOLDER: data.DATASETS_FOLDER || '',
-        });
-        setIsLoaded(true);
-      })
-      .catch(error => console.error('Error fetching settings:', error));
+    // Load from LocalStorage on mount
+    const storedToken = localStorage.getItem('AI_TOOLKIT_HF_TOKEN');
+    if (storedToken) {
+      setSettings({ HF_TOKEN: storedToken });
+    }
+    setIsLoaded(true);
   }, []);
 
-  return { settings, setSettings, isSettingsLoaded };
+  const saveSettings = (newSettings: Settings) => {
+    localStorage.setItem('AI_TOOLKIT_HF_TOKEN', newSettings.HF_TOKEN);
+    setSettings(newSettings);
+  };
+
+  return { settings, setSettings, saveSettings, isSettingsLoaded };
 }

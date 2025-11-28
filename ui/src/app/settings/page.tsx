@@ -1,128 +1,98 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import useSettings from '@/hooks/useSettings';
 import { TopBar, MainContent } from '@/components/layout';
-import { apiClient } from '@/utils/api';
+import { Button } from '@headlessui/react';
+import { Save } from 'lucide-react';
 
 export default function Settings() {
-  const { settings, setSettings } = useSettings();
-  const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const { settings, saveSettings, isSettingsLoaded } = useSettings();
+  const [token, setToken] = useState('');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle');
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Sync local state with loaded settings
+  useEffect(() => {
+    if (isSettingsLoaded) {
+      setToken(settings.HF_TOKEN);
+    }
+  }, [settings, isSettingsLoaded]);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('saving');
 
-    apiClient
-      .post('/api/settings', settings)
-      .then(() => {
-        setStatus('success');
-      })
-      .catch(error => {
-        console.error('Error saving settings:', error);
-        setStatus('error');
-      })
-      .finally(() => {
-        setTimeout(() => setStatus('idle'), 2000);
-      });
-  };
+    // Save to LocalStorage
+    saveSettings({ HF_TOKEN: token });
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setSettings(prev => ({ ...prev, [name]: value }));
+    // Fake loading for UX
+    setTimeout(() => {
+        setStatus('success');
+        setTimeout(() => setStatus('idle'), 2000);
+    }, 500);
   };
 
   return (
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Settings</h1>
+          <h1 className="text-lg font-semibold">Settings</h1>
         </div>
         <div className="flex-1"></div>
       </TopBar>
       <MainContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            <div>
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="HF_TOKEN" className="block text-sm font-medium mb-2">
-                    Hugging Face Token
-                    <div className="text-gray-500 text-sm ml-1">
-                      Create a Read token on{' '}
-                      <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
-                        {' '}
-                        Huggingface
-                      </a>{' '}
-                      if you need to access gated/private models.
+        <div className="max-w-2xl mx-auto">
+            <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-6">
+
+                <div className="space-y-4">
+                    <div>
+                        <h2 className="text-xl font-medium text-gray-200 mb-1">API Configuration</h2>
+                        <p className="text-sm text-gray-500">
+                            Configure external services for your training jobs.
+                        </p>
                     </div>
-                  </label>
-                  <input
-                    type="password"
-                    id="HF_TOKEN"
-                    name="HF_TOKEN"
-                    value={settings.HF_TOKEN}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter your Hugging Face token"
-                  />
+
+                    <div className="pt-4">
+                        <label htmlFor="HF_TOKEN" className="block text-sm font-medium text-gray-300 mb-2">
+                            Hugging Face Token
+                        </label>
+                        <input
+                            type="password"
+                            id="HF_TOKEN"
+                            value={token}
+                            onChange={(e) => setToken(e.target.value)}
+                            className="w-full px-4 py-2.5 bg-gray-950 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-transparent text-gray-200 placeholder-gray-600"
+                            placeholder="hf_..."
+                        />
+                        <p className="text-xs text-gray-500 mt-2">
+                            Required if you are training on gated models (like FLUX.1-dev).
+                            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline ml-1">
+                                Get your token here.
+                            </a>
+                        </p>
+                    </div>
                 </div>
 
-                <div>
-                  <label htmlFor="TRAINING_FOLDER" className="block text-sm font-medium mb-2">
-                    Training Folder Path
-                    <div className="text-gray-500 text-sm ml-1">
-                      We will store your training information here. Must be an absolute path. If blank, it will default
-                      to the output folder in the project root.
-                    </div>
-                  </label>
-                  <input
-                    type="text"
-                    id="TRAINING_FOLDER"
-                    name="TRAINING_FOLDER"
-                    value={settings.TRAINING_FOLDER}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter training folder path"
-                  />
+                <div className="pt-4 border-t border-gray-800 flex items-center justify-between">
+                    <p className="text-xs text-gray-500">
+                        Settings are saved locally in your browser.
+                    </p>
+                    <Button
+                        type="submit"
+                        disabled={status === 'saving'}
+                        className={`
+                            flex items-center px-6 py-2 rounded-lg font-medium transition-all
+                            ${status === 'success' 
+                                ? 'bg-green-600 hover:bg-green-500 text-white' 
+                                : 'bg-blue-600 hover:bg-blue-500 text-white'}
+                        `}
+                    >
+                        <Save className="w-4 h-4 mr-2" />
+                        {status === 'saving' ? 'Saving...' : status === 'success' ? 'Saved!' : 'Save Settings'}
+                    </Button>
                 </div>
-
-                <div>
-                  <label htmlFor="DATASETS_FOLDER" className="block text-sm font-medium mb-2">
-                    Dataset Folder Path
-                    <div className="text-gray-500 text-sm ml-1">
-                      Where we store and find your datasets.{' '}
-                      <span className="text-orange-800">
-                        Warning: This software may modify datasets so it is recommended you keep a backup somewhere else
-                        or have a dedicated folder for this software.
-                      </span>
-                    </div>
-                  </label>
-                  <input
-                    type="text"
-                    id="DATASETS_FOLDER"
-                    name="DATASETS_FOLDER"
-                    value={settings.DATASETS_FOLDER}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter datasets folder path"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={status === 'saving'}
-            className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {status === 'saving' ? 'Saving...' : 'Save Settings'}
-          </button>
-
-          {status === 'success' && <p className="text-green-500 text-center">Settings saved successfully!</p>}
-          {status === 'error' && <p className="text-red-500 text-center">Error saving settings. Please try again.</p>}
-        </form>
+            </form>
+        </div>
       </MainContent>
     </>
   );

@@ -1,6 +1,10 @@
+// src/utils/queue.ts
 import { apiClient } from '@/utils/api';
 
-export const startQueue = (queueID: string) => {
+export const startQueue = (queueID: string | null) => {
+  // If no queueID is provided (handled by Modal), we just resolve
+  if (!queueID) return Promise.resolve();
+
   return new Promise<void>((resolve, reject) => {
     apiClient
       .get(`/api/queue/${queueID}/start`)
@@ -15,6 +19,7 @@ export const startQueue = (queueID: string) => {
       });
   });
 };
+
 export const stopQueue = (queueID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

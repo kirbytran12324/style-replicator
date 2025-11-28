@@ -9,33 +9,34 @@ export default function useSampleImages(jobID: string, reloadInterval: null | nu
 
   const refreshSampleImages = () => {
     setStatus('loading');
+
+    // Calls Modal: GET /api/jobs/{jobID}/samples
     apiClient
       .get(`/api/jobs/${jobID}/samples`)
       .then(res => res.data)
       .then(data => {
-        console.log('Fetched sample images:', data);
         if (data.samples) {
+          // Ensure paths are full URLs or relative to API proxy
+          // If the backend returns paths like "/api/files/...", we are good.
           setSampleImages(data.samples);
         }
         setStatus('success');
       })
       .catch(error => {
-        console.error('Error fetching datasets:', error);
-        setStatus('error');
+         if (error.response?.status !== 404) {
+            console.error('Error fetching samples:', error);
+            setStatus('error');
+         }
       });
   };
 
   useEffect(() => {
+    if(!jobID) return;
     refreshSampleImages();
 
     if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshSampleImages();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
+      const interval = setInterval(refreshSampleImages, reloadInterval);
+      return () => clearInterval(interval);
     }
   }, [jobID]);
 

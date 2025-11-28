@@ -1,201 +1,90 @@
-import { useMemo } from 'react';
+'use client';
+
 import useJobsList from '@/hooks/useJobsList';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
-import { GpuInfo, JobConfig } from '@/types';
-import JobActionBar from './JobActionBar';
-import { Job, Queue } from '@prisma/client';
-import useQueueList from '@/hooks/useQueueList';
-import classNames from 'classnames';
-import { startQueue, stopQueue } from '@/utils/queue';
+import { Job } from '@/utils/types';
 import { CgSpinner } from 'react-icons/cg';
-import useGPUInfo from '@/hooks/useGPUInfo';
+import { CheckCircle, XCircle, Clock, PlayCircle } from 'lucide-react';
 
 interface JobsTableProps {
-  autoStartQueue?: boolean;
   onlyActive?: boolean;
 }
 
 export default function JobsTable({ onlyActive = false }: JobsTableProps) {
   const { jobs, status, refreshJobs } = useJobsList(onlyActive, 5000);
-  const { queues, status: queueStatus, refreshQueues } = useQueueList();
-  const { gpuList, isGPUInfoLoaded } = useGPUInfo();
-
-  const refresh = () => {
-    refreshJobs();
-    refreshQueues();
-  };
 
   const columns: TableColumn[] = [
     {
       title: 'Name',
-      key: 'name',
-      render: row => (
-        <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-          {['running', 'stopping'].includes(row.status) ? (
+      key: 'config_name',
+      render: (row: Job) => (
+        <Link href={`/jobs/${row.job_id}`} className="font-medium whitespace-nowrap flex items-center hover:text-blue-400 transition-colors">
+          {['running', 'started'].includes(row.status) ? (
             <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
           ) : null}
-          {row.name}
+          {row.config_name || row.job_id}
         </Link>
       ),
     },
     {
-      title: 'Steps',
-      key: 'steps',
-      render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
-
-        return (
-          <div>
-            <div className="text-xs text-gray-400">
-              {row.step} / {totalSteps}
-            </div>
-            <div className="bg-gray-700 rounded-full h-1.5">
-              <div
-                className="bg-blue-500 h-1.5 rounded-full"
-                style={{ width: `${(row.step / totalSteps) * 100}%` }}
-              ></div>
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      title: 'GPU',
-      key: 'gpu_ids',
+      title: 'ID',
+      key: 'job_id',
+      className: 'font-mono text-xs text-gray-500 truncate max-w-[100px]',
     },
     {
       title: 'Status',
       key: 'status',
-      render: row => {
-        let statusClass = 'text-gray-400';
-        if (row.status === 'completed') statusClass = 'text-green-400';
-        if (row.status === 'failed') statusClass = 'text-red-400';
-        if (row.status === 'running') statusClass = 'text-blue-400';
+      render: (row: Job) => {
+        let color = 'text-gray-400';
+        let icon = <Clock className="w-4 h-4 mr-1 inline" />;
+        
+        switch (row.status) {
+          case 'completed':
+            color = 'text-emerald-400';
+            icon = <CheckCircle className="w-4 h-4 mr-1 inline" />;
+            break;
+          case 'failed':
+            color = 'text-red-400';
+            icon = <XCircle className="w-4 h-4 mr-1 inline" />;
+            break;
+          case 'running':
+          case 'started':
+            color = 'text-blue-400';
+            icon = <PlayCircle className="w-4 h-4 mr-1 inline" />;
+            break;
+        }
 
-        return <span className={statusClass}>{row.status}</span>;
+        return (
+          <span className={`flex items-center capitalize ${color}`}>
+            {icon} {row.status}
+          </span>
+        );
       },
-    },
-    {
-      title: 'Info',
-      key: 'info',
-      className: 'truncate max-w-xs',
     },
     {
       title: 'Actions',
       key: 'actions',
       className: 'text-right',
-      render: row => {
-        return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} />;
-      },
+      render: (row: Job) => (
+        <Link 
+          href={`/jobs/${row.job_id}`}
+          className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded border border-gray-700 transition-colors"
+        >
+          View Details
+        </Link>
+      ),
     },
   ];
 
-  const jobsDict = useMemo(() => {
-    if (!isGPUInfoLoaded) return {};
-    if (jobs.length === 0) return {};
-    let jd: { [key: string]: { name: string; jobs: Job[] } } = {};
-    gpuList.forEach(gpu => {
-      jd[`${gpu.index}`] = { name: `${gpu.name}`, jobs: [] };
-    });
-    jd['Idle'] = { name: 'Idle', jobs: [] };
-    jobs.forEach(job => {
-      const gpu = gpuList.find(gpu => job.gpu_ids?.split(',').includes(gpu.index.toString())) as GpuInfo;
-      const key = `${gpu.index}`;
-      if (['queued', 'running', 'stopping'].includes(job.status) && key in jd) {
-        jd[key].jobs.push(job);
-      } else {
-        jd['Idle'].jobs.push(job);
-      }
-    });
-    // sort the queued/running jobs by queue position
-    Object.keys(jd).forEach(key => {
-      if (key === 'Idle') return;
-      jd[key].jobs.sort((a, b) => {
-        if (a.queue_position === null) return 1;
-        if (b.queue_position === null) return -1;
-        return a.queue_position - b.queue_position;
-      });
-    });
-    return jd;
-  }, [jobs, queues, isGPUInfoLoaded]);
-
-  let isLoading = status === 'loading' || queueStatus === 'loading' || !isGPUInfoLoaded;
-
-  // if job dict is populated, we are always loaded
-  if (Object.keys(jobsDict).length > 0) isLoading = false;
-
   return (
-    <div>
-      {Object.keys(jobsDict)
-        .sort()
-        .filter(key => key !== 'Idle')
-        .map(gpuKey => {
-          const queue = queues.find(q => `${q.gpu_ids}` === gpuKey) as Queue;
-          return (
-            <div key={gpuKey} className="mb-6">
-              <div
-                className={classNames(
-                  'text-md flex px-4 py-1 rounded-t-lg',
-                  { 'bg-green-900': queue?.is_running },
-                  { 'bg-red-900': !queue?.is_running },
-                )}
-              >
-                <div className="flex items-center space-x-2 flex-1 py-2">
-                  <h2 className="font-semibold text-gray-100">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
-                </div>
-                <div className="text-sm text-gray-300 italic flex items-center">
-                  {queue?.is_running ? (
-                    <>
-                      <span className="text-green-400 mr-2">Queue Running</span>
-                      <button
-                        onClick={async () => {
-                          await stopQueue(queue.gpu_ids as string);
-                          refresh();
-                        }}
-                        className="ml-4 text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded"
-                      >
-                        STOP
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-red-400 mr-2">Queue Stopped</span>
-                      <button
-                        onClick={async () => {
-                          await startQueue(gpuKey);
-                          refresh();
-                        }}
-                        className="ml-4 text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
-                      >
-                        START
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-              <UniversalTable
-                columns={columns}
-                rows={jobsDict[gpuKey].jobs}
-                isLoading={isLoading}
-                onRefresh={refresh}
-                theadClassName={queue?.is_running ? 'bg-green-950' : 'bg-red-950'}
-              />
-            </div>
-          );
-        })}
-      {!onlyActive && Object.keys(jobsDict).includes('Idle') && (
-        <div className="mb-6 opacity-50">
-          <div className="text-md flex px-4 py-1 rounded-t-lg bg-slate-600">
-            <div className="flex items-center space-x-2 flex-1 py-2">
-              <h2 className="font-semibold text-gray-100">Idle</h2>
-            </div>
-          </div>
-          <UniversalTable columns={columns} rows={jobsDict['Idle'].jobs} isLoading={isLoading} onRefresh={refresh} />
-        </div>
-      )}
+    <div className="space-y-6">
+      <UniversalTable
+        columns={columns}
+        rows={jobs}
+        isLoading={status === 'loading' && jobs.length === 0}
+        onRefresh={refreshJobs}
+      />
     </div>
   );
 }
