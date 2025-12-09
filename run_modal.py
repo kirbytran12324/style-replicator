@@ -68,6 +68,12 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB cap per file
 _filename_sanitize_re = re.compile(r"[^A-Za-z0-9._-]")
 
 
+def _split_env_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def safe_filename(name: str, max_len: int = 200) -> str:
     name = Path(name).name
     name = _filename_sanitize_re.sub("_", name)
@@ -323,10 +329,22 @@ def _current_call_id() -> Optional[str]:
 # ------------------------------------------------------------
 # FastAPI app & CORS
 # ------------------------------------------------------------
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:8788",
+    "http://127.0.0.1:8787"
+]
+EXTRA_ALLOWED_ORIGINS = _split_env_list(os.environ.get("CORS_EXTRA_ORIGINS", ""))
+ALLOW_ORIGIN_REGEX = os.environ.get(
+    "CORS_ORIGIN_REGEX",
+    r"https://.*\.(pages\.dev|workers\.dev)"
+)
+
 api = FastAPI()
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://*.pages.dev"],
+    allow_origins=DEFAULT_ALLOWED_ORIGINS + EXTRA_ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOW_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1589,4 +1607,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception("Local CLI main call failed: %s", e)
         raise
-
