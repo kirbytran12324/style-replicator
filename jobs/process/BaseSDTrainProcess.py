@@ -40,6 +40,7 @@ from toolkit.network_mixins import Network
 from toolkit.optimizer import get_optimizer
 from toolkit.paths import CONFIG_ROOT
 from toolkit.progress_bar import ToolkitProgressBar
+from toolkit.progress_tracker import ProgressSnapshot
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
 from toolkit.saving import save_t2i_from_diffusers, load_t2i_model, save_ip_adapter_from_diffusers, \
@@ -2017,13 +2018,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.progress_bar.pause()
         else:
             self.progress_bar = None
+        if hasattr(self.job, 'progress_tracker'):
+            self.set_progress_tracker(self.job.progress_tracker)
+
+        dataloader = None
+        dataloader_iterator = None
 
         if self.data_loader is not None:
             dataloader = self.data_loader
             dataloader_iterator = iter(dataloader)
-        else:
-            dataloader = None
-            dataloader_iterator = None
+
+        dataloader_reg = None
+        dataloader_iterator_reg = None
 
         if self.data_loader_reg is not None:
             dataloader_reg = self.data_loader_reg
@@ -2031,6 +2037,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             dataloader_reg = None
             dataloader_iterator_reg = None
+
+        if dataloader is None and dataloader_reg is None:
+            raise ValueError("No training datasets were loaded. Please define at least one dataset in config.config.process[0].datasets before starting training.")
 
         # zero any gradients
         optimizer.zero_grad()
@@ -2057,6 +2066,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
+            self._emit_progress(step=step, total=self.train_config.steps, phase='training')
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')
@@ -2303,7 +2313,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # sets progress bar to match out step
                 if self.progress_bar is not None:
                     self.progress_bar.update(step - self.progress_bar.n)
-
+                if self.progress_tracker is not None:
+                    self.progress_tracker.update(step=self.step_num, total=self.train_config.steps,
+                                                 info={'loss': loss_dict.get('loss') if isinstance(loss_dict, dict) else None},
+                                                 phase='training')
                 #############################
                 # End of step
                 #############################
@@ -2320,6 +2333,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.accelerator.wait_for_everyone()
         if self.progress_bar is not None:
             self.progress_bar.close()
+        if self.progress_tracker is not None:
+            self.progress_tracker.complete('training-finished')
         if self.train_config.free_u:
             self.sd.pipeline.disable_freeu()
         if not self.train_config.disable_sampling:

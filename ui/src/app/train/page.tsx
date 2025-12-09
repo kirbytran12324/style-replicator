@@ -8,7 +8,6 @@ import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
 import useSettings from '@/hooks/useSettings';
 import useDatasetList from '@/hooks/useDatasetList';
-import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
@@ -38,7 +37,7 @@ export default function TrainingForm() {
     // Modal paths are virtual, but we keep the structure consistent
     // The value here is what gets sent to the python script
     const datasetOptions = datasets.map(name => ({
-        value: path.join('/root/modal_output/datasets', name),
+        value: `/root/modal_output/datasets/${name}`,
         label: name
     }));
     setDatasetOptions(datasetOptions);
@@ -62,7 +61,8 @@ export default function TrainingForm() {
       const res = await apiClient.post('/api/train', {
         name: jobConfig.config.name,
         config: jobConfig, // Send the whole config object
-        recover: false
+        recover: false,
+        hf_token: settings.HF_TOKEN
       });
 
       setStatus('success');

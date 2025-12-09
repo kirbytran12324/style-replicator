@@ -11,10 +11,11 @@ def print_acc(*args, **kwargs):
 class Logger:
     def __init__(self, filename):
         self.terminal = sys.stdout
-        self.log = open(filename, 'a')
+        self.log = open(filename, 'a', buffering=1)
 
     def write(self, message):
         self.terminal.write(message)
+        self.terminal.flush()
         self.log.write(message)
         self.log.flush()  # Make sure it's written immediately
 

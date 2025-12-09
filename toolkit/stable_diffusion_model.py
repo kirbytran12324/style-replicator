@@ -74,8 +74,55 @@ from transformers import AutoModel, AutoTokenizer, Gemma2Model, Qwen2Model, Llam
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
 
+
 # tell it to shut up
 diffusers.logging.set_verbosity(diffusers.logging.ERROR)
+
+from pathlib import Path
+from huggingface_hub import snapshot_download
+
+HF_CACHE_DIR = os.environ.get("HF_HOME", "/root/.cache/huggingface")
+
+
+def ensure_repo_offline(repo_id: str, hf_token: Optional[str] = None, cache_dir: Optional[str] = None) -> None:
+    """
+    Generic offline helper for any Hugging Face repo:
+    - If repo exists in cache, force HF_HUB_OFFLINE\=1.
+    - Otherwise download with hf_token, then force offline.
+    """
+    cache_dir = cache_dir or HF_CACHE_DIR
+
+    # propagate token so diffusers / huggingface_hub can see it
+    if hf_token:
+        os.environ["HF_TOKEN"] = hf_token
+        os.environ["HUGGINGFACE_HUB_TOKEN"] = hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+
+    try:
+        # try local-only first \- raises if not present
+        snapshot_download(
+            repo_id,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+        # cached: go offline
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        return
+    except Exception:
+        # not cached, try to download using token
+        try:
+            snapshot_download(
+                repo_id,
+                cache_dir=cache_dir,
+                token=hf_token,
+                local_files_only=False,
+            )
+            # once downloaded, we can go offline
+            os.environ["HF_HUB_OFFLINE"] = "1"
+        except Exception as e:
+            # do not crash here; caller will hit the real error during from_pretrained
+            print(f"[hf-offline] warning: failed to pre\-cache {repo_id}: {e}")
+
 
 SD_PREFIX_VAE = "vae"
 SD_PREFIX_UNET = "unet"
@@ -277,6 +324,21 @@ class StableDiffusion:
         
 
     def load_model(self):
+        base_repo = getattr(self.model_config, "name_or_path", None)
+        if isinstance(base_repo, str) and base_repo and not base_repo.startswith("/") and not base_repo.startswith("."):
+            # get token from env (run\_modal.py already sets HUGGINGFACE_HUB_TOKEN)
+            hf_token = (
+                    os.environ.get("HUGGINGFACE_HUB_TOKEN")
+                    or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+                    or os.environ.get(" HF_TOKEN")
+                    or os.environ.get("HF_TOKEN")
+            )
+            ensure_repo_offline(
+                repo_id=base_repo,
+                hf_token=hf_token,
+                cache_dir=HF_CACHE_DIR,
+            )
+
         if self.is_loaded:
             return
         dtype = get_torch_dtype(self.dtype)
@@ -291,6 +353,8 @@ class StableDiffusion:
             # load is a civit ai model, use the loader.
             from toolkit.civitai import get_model_path_from_url
             model_path = get_model_path_from_url(self.model_config.name_or_path)
+
+        local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
 
         load_args = {}
         if self.noise_scheduler:

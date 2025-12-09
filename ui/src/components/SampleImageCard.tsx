@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, ReactNode } from 'react';
+import React, { useRef, useEffect, useState, ReactNode, useMemo } from 'react';
 import { isVideo } from '@/utils/basic';
 
 interface SampleImageCardProps {
@@ -31,6 +31,14 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [loaded, setLoaded] = useState(false);
+
+  // Construct the full URL using the environment variable
+  const fullImageSrc = useMemo(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    // Do not encodeURIComponent here for the path parts, assuming backend handles path params
+    return `${cleanBase}/api/files/${imageUrl}`;
+  }, [imageUrl]);
 
   // Observe both enter and exit
   useEffect(() => {
@@ -78,7 +86,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
             isVideo(imageUrl) ? (
               <video
                 ref={videoRef}
-                src={`/api/files/${encodeURIComponent(imageUrl)}`}
+                src={fullImageSrc}
                 className="w-full h-full object-cover"
                 preload="none"
                 playsInline
@@ -88,7 +96,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
               />
             ) : (
               <img
-                src={`/api/files/${encodeURIComponent(imageUrl)}`}
+                src={fullImageSrc}
                 alt={alt}
                 onLoad={handleLoad}
                 loading="lazy"

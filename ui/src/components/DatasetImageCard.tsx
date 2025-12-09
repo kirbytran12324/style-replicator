@@ -1,5 +1,3 @@
-'use client';
-
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent, useMemo } from 'react';
 import { FaTrashAlt } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
@@ -8,7 +6,7 @@ import { apiClient } from '@/utils/api';
 import { isVideo } from '@/utils/basic';
 
 interface DatasetImageCardProps {
-  imageUrl: string; // This is the relative path from the API response
+  imageUrl: string; // relative path under MOUNT_DIR, e.g. "datasets/default_user/ds1/img.png"
   alt: string;
   children?: ReactNode;
   className?: string;
@@ -25,72 +23,73 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [inViewport, setInViewport] = useState<boolean>(false);
+  const [hasEverBeenInViewport, setHasEverBeenInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
+
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
   const isGettingCaption = useRef<boolean>(false);
 
-  // Construct the full image URL for the <img> tag
   const fullImageSrc = useMemo(() => {
     const baseUrl = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
-    // Ensure we don't double slash
     const cleanBase = baseUrl.replace(/\/$/, '');
-    // The endpoint we defined in python: @api.get("/api/files/{file_path:path}")
-    // imageUrl usually comes in as "datasets/my-dataset/img.jpg"
     return `${cleanBase}/api/files/${imageUrl}`;
   }, [imageUrl]);
 
   const fetchCaption = async () => {
     if (isGettingCaption.current || isCaptionLoaded) return;
     isGettingCaption.current = true;
-    
-    // Call Modal: GET /api/files/caption?path=...
-    apiClient
-      .get(`/api/files/caption`, { params: { path: imageUrl } })
-      .then(res => res.data)
-      .then(data => {
-        // data.caption should be the string
-        const txt = data.caption || '';
-        setCaption(txt);
-        setSavedCaption(txt);
-        setIsCaptionLoaded(true);
-      })
-      .catch(error => {
-        // 404 means no caption file yet, which is fine
-        if (error.response?.status !== 404) {
-            console.error('Error fetching caption:', error);
-        } else {
-            setIsCaptionLoaded(true); // Loaded, just empty
-        }
-      })
-      .finally(() => {
-        isGettingCaption.current = false;
-      });
+
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
+      const cleanBase = baseUrl.replace(/\/$/, '');
+      const params = new URLSearchParams({ path: imageUrl });
+      const captionUrl = `${cleanBase}/api/files/caption?${params.toString()}`;
+
+      const res = await fetch(captionUrl);
+      if (!res.ok) {
+        // caption endpoint returns 200 with { caption: "" } on missing files,
+        // so non-2xx is a real error
+        throw new Error(`Caption fetch failed: ${res.status}`);
+      }
+      const data = await res.json();
+      const text = (data?.caption as string) ?? '';
+      setCaption(text);
+      setSavedCaption(text);
+    } catch (_err) {
+      // treat as no caption
+      setCaption('');
+      setSavedCaption('');
+    } finally {
+      setIsCaptionLoaded(true);
+      isGettingCaption.current = false;
+    }
   };
 
-  const saveCaption = () => {
+  const saveCaption = async () => {
     const trimmedCaption = caption.trim();
     if (trimmedCaption === savedCaption) return;
-    
-    // Call Modal: POST /api/files/caption
-    apiClient
-      .post('/api/files/caption', { path: imageUrl, caption: trimmedCaption })
-      .then(() => {
-        setSavedCaption(trimmedCaption);
-      })
-      .catch(error => {
-        console.error('Error saving caption:', error);
+
+    try {
+      await apiClient.post('/api/files/caption', {
+        path: imageUrl,
+        caption: trimmedCaption,
       });
+      setSavedCaption(trimmedCaption);
+    } catch (error) {
+      console.error('Error saving caption:', error);
+    }
   };
 
-  // Intersection Observer to lazy load images/captions
   useEffect(() => {
     const observer = new IntersectionObserver(
       entries => {
-        if (entries[0].isIntersecting) {
+        const entry = entries[0];
+        if (entry.isIntersecting) {
           setInViewport(true);
           if (!isVisible) setIsVisible(true);
+          if (!hasEverBeenInViewport) setHasEverBeenInViewport(true);
         } else {
           setInViewport(false);
         }
@@ -100,14 +99,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
     if (cardRef.current) observer.observe(cardRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [hasEverBeenInViewport, isVisible]);
 
-  // Fetch caption when visible
   useEffect(() => {
-    if (inViewport && isVisible) {
+    if (hasEverBeenInViewport && !isCaptionLoaded) {
       fetchCaption();
     }
-  }, [inViewport, isVisible]);
+  }, [hasEverBeenInViewport, isCaptionLoaded]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -121,19 +119,18 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   return (
     <div className={`flex flex-col ${className} group`}>
-      {/* Square container */}
       <div
         ref={cardRef}
         className="relative w-full bg-gray-900 rounded-t-lg border border-gray-800 border-b-0 overflow-hidden"
-        style={{ paddingBottom: '100%' }} 
+        style={{ paddingBottom: '100%' }}
       >
         <div className="absolute inset-0">
-          {inViewport && isVisible && (
+          {hasEverBeenInViewport && (
             <>
               {isItAVideo ? (
                 <video
                   src={fullImageSrc}
-                  className={`w-full h-full object-contain`}
+                  className="w-full h-full object-contain"
                   controls
                   preload="metadata"
                 />
@@ -149,21 +146,20 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               )}
             </>
           )}
-          
-          {/* Overlay Actions */}
+
           <div className="absolute top-2 right-2 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               className="bg-black/60 hover:bg-red-600 text-white rounded-md p-1.5 backdrop-blur-sm transition-colors"
               title="Delete Image"
               onClick={() => {
                 openConfirm({
-                  title: `Delete File`,
+                  title: 'Delete File',
                   message: `Delete this ${isItAVideo ? 'video' : 'image'}?`,
                   type: 'warning',
                   confirmText: 'Delete',
                   onConfirm: () => {
                     apiClient
-                      .delete(`/api/files/${encodeURIComponent(imageUrl)}`) // Use DELETE method
+                      .delete(`/api/files/${encodeURIComponent(imageUrl)}`)
                       .then(() => onDelete())
                       .catch(error => console.error('Error deleting:', error));
                   },
@@ -174,25 +170,29 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </button>
           </div>
         </div>
-        
-        {/* Filename overlay */}
+
         <div className="absolute bottom-0 left-0 w-full bg-black/60 backdrop-blur-[2px] p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[10px] text-gray-300 truncate font-mono text-center">
-                {imageUrl.split('/').pop()}
-            </p>
+          <p className="text-[10px] text-gray-300 truncate font-mono text-center">
+            {imageUrl.split('/').pop()}
+          </p>
         </div>
       </div>
 
-      {/* Caption Box */}
       <div
-        className={classNames('w-full bg-gray-800 border-x border-b border-gray-700 rounded-b-lg h-[80px] relative transition-colors', {
-          'border-blue-500/50 ring-1 ring-blue-500/20': !isCaptionCurrent,
-        })}
+        className={classNames(
+          'w-full bg-gray-800 border-x border-b border-gray-700 rounded-b-lg h-[80px] relative transition-colors',
+          {
+            'border-blue-500/50 ring-1 ring-blue-500/20': !isCaptionCurrent,
+          },
+        )}
       >
         {isCaptionLoaded ? (
           <form
             className="h-full"
-            onSubmit={e => { e.preventDefault(); saveCaption(); }}
+            onSubmit={e => {
+              e.preventDefault();
+              saveCaption();
+            }}
             onBlur={saveCaption}
           >
             <textarea

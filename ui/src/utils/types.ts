@@ -255,7 +255,7 @@ export type JobStatus = 'queued' | 'running' | 'stopping' | 'stopped' | 'complet
 
 export interface Job {
   job_id: string;
-  id?: string; // fallback alias
+  id?: string;
   status: string;
   config_name: string;
   created_at?: string;
@@ -263,7 +263,17 @@ export interface Job {
   error?: string;
   duration?: string;
   job_config?: string;
+  job_config_text?: string | null;
   step?: number;
   stop?: boolean;
   gpu_ids?: string;
+  progress?: {
+    step?: number;
+    total?: number;
+    percent?: number;
+    phase?: string;
+    message?: string;
+    info?: Record<string, any>;
+    updated_at?: string;
+  } | null;
 }

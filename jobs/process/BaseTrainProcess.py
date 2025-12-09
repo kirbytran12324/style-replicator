@@ -2,12 +2,13 @@ import random
 from datetime import datetime
 import os
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Union, Optional
 
 import torch
 import yaml
 
 from jobs.process.BaseProcess import BaseProcess
+from toolkit.progress_tracker import ProgressTracker, ProgressSnapshot
 
 if TYPE_CHECKING:
     from jobs import TrainJob, BaseJob, ExtensionJob
@@ -29,6 +30,7 @@ class BaseTrainProcess(BaseProcess):
         self.writer: 'SummaryWriter'
         self.job: Union['TrainJob', 'BaseJob', 'ExtensionJob']
         self.progress_bar: 'tqdm' = None
+        self.progress_tracker: Optional[ProgressTracker] = None
 
         self.training_seed = self.get_conf('training_seed', self.job.training_seed if hasattr(self.job, 'training_seed') else None)
         # if training seed is set, use it
@@ -62,6 +64,14 @@ class BaseTrainProcess(BaseProcess):
             self.progress_bar.update()
         else:
             print(*args)
+        self._emit_progress(message=' '.join(map(str, args)))
+
+    def set_progress_tracker(self, tracker: ProgressTracker):
+        self.progress_tracker = tracker
+
+    def _emit_progress(self, **kwargs):
+        if self.progress_tracker is not None:
+            self.progress_tracker.update(**kwargs)
 
     def setup_tensorboard(self):
         if self.log_dir:

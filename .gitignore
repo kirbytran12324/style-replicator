@@ -196,3 +196,12 @@ ui/out/
 ui/build/
 ui/.env.local
 ui/.env
+
+modal_output/
+config/
+extensions_built_in/
+output/
+prior_data/
+
+.gitignore
+.gitmodules

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, use } from 'react';
+import { useState, use, useEffect, useRef } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
+import useJobLog from '@/hooks/useJobLog'; // Import the log hook
 import SampleImages, { SampleImagesMenu } from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
@@ -12,7 +13,45 @@ import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import { Job } from '@/utils/types';
 
-type PageKey = 'overview' | 'samples' | 'config';
+// --- New Log Component ---
+const JobLogs = ({ job }: { job: Job }) => {
+  // Poll every 2 seconds if running, otherwise stop polling
+  const pollInterval = job.status === 'running' || job.status === 'started' ? 2000 : null;
+  const { log, status, refresh } = useJobLog(job.job_id, pollInterval);
+  const scrollRef = useRef<HTMLPreElement>(null);
+
+  // Auto-scroll to bottom on new log data
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [log]);
+
+  return (
+    <div className="h-full flex flex-col pt-6 pb-20 px-4 max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold">Training Logs</h2>
+        <Button
+          onClick={() => refresh()}
+          className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded"
+        >
+          Refresh
+        </Button>
+      </div>
+      <div className="flex-grow relative bg-black rounded-lg border border-gray-800 overflow-hidden shadow-inner">
+        <pre
+          ref={scrollRef}
+          className="absolute inset-0 p-4 overflow-auto text-xs md:text-sm font-mono text-green-400 whitespace-pre-wrap"
+        >
+          {log || (status === 'loading' ? 'Loading logs...' : 'No logs available yet.')}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
+// --- Updated Pages Configuration ---
+type PageKey = 'overview' | 'samples' | 'logs' | 'config';
 
 interface Page {
   name: string;
@@ -35,6 +74,12 @@ const pages: Page[] = [
     component: SampleImages,
     menuItem: SampleImagesMenu,
     mainCss: 'pt-24',
+  },
+  {
+    name: 'Logs', // New Logs Tab
+    value: 'logs',
+    component: JobLogs,
+    mainCss: 'pt-[80px] h-[calc(100vh-80px)]', // Full height for log viewer
   },
   {
     name: 'Config File',

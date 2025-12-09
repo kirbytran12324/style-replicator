@@ -24,13 +24,26 @@ const yamlConfig: YAML.DocumentOptions &
 export default function JobConfigViewer({ job }: Props) {
   const [editorValue, setEditorValue] = useState<string>('');
   useEffect(() => {
-    if (job?.job_config) {
-      const yamlContent = YAML.stringify(JSON.parse(job.job_config), yamlConfig);
-      setEditorValue(yamlContent);
+    if (job?.job_config_text) {
+      setEditorValue(job.job_config_text);
+    } else if (job?.job_config) {
+      try {
+        const yamlContent = YAML.stringify(JSON.parse(job.job_config), yamlConfig);
+        setEditorValue(yamlContent);
+      } catch (err) {
+        console.error('Unable to parse legacy job_config JSON', err);
+        setEditorValue('');
+      }
+    } else {
+      setEditorValue('');
     }
   }, [job]);
+  const isEmpty = !editorValue?.trim();
   return (
-    <>
+    <div className="h-full">
+      {isEmpty && (
+        <div className="text-gray-400 text-sm mb-2 px-4">Config not available yet.</div>
+      )}
       <Editor
         height="100%"
         width="100%"
@@ -44,6 +57,6 @@ export default function JobConfigViewer({ job }: Props) {
           readOnly: true,
         }}
       />
-    </>
+    </div>
   );
 }
