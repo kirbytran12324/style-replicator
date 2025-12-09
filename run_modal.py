@@ -17,6 +17,7 @@ import argparse
 import traceback
 import uuid
 import json
+import hashlib
 
 import oyaml as yaml
 from pathlib import Path
@@ -198,11 +199,13 @@ class GenerateRequest(BaseModel):
     model_name: Optional[str] = None
     base_model: Optional[str] = "black-forest-labs/FLUX.1-dev"
     hf_token: Optional[str] = None
+    seed: Optional[int] = None
 
 
 class GenerateResponse(BaseModel):
     images: List[str]
     status: str
+    seed: int
 
 
 class TrainRequest(BaseModel):
@@ -958,16 +961,20 @@ async def generate(request: GenerateRequest, user_id: str = Depends(get_current_
 
         remote_generate_func = modal.Function.from_name("flex-lora-training", "remote_generate")
 
-        # --- CALL WITH NEW ARGUMENTS ---
+        base_seed = request.seed
+        if base_seed is None:
+            seed_input = f"{user_id}:{job_stub}:{request.prompt}"
+            base_seed = int.from_bytes(hashlib.sha256(seed_input.encode("utf-8")).digest()[:4], "big")
+
         saved_rel_paths = await remote_generate_func.remote.aio(
             prompt=request.prompt,
             num_samples=request.num_samples,
             lora_path=lora_path,
             out_dir=out_dir,
-            base_model=request.base_model,  # Pass the base model
-            hf_token=request.hf_token  # Pass the token
+            base_model=request.base_model,
+            hf_token=request.hf_token,
+            seed=base_seed,
         )
-        # -------------------------------
 
         safe_commit(model_volume)
         model_volume.reload()
@@ -984,7 +991,7 @@ async def generate(request: GenerateRequest, user_id: str = Depends(get_current_
             logger.info("Generated image URL: %s (path: %s)", url, rp)
             urls.append(url)
 
-        return GenerateResponse(images=urls, status="success")
+        return GenerateResponse(images=urls, status="success", seed=base_seed)
     except HTTPException:
         raise
     except Exception as e:
@@ -1480,8 +1487,9 @@ def remote_generate(
         num_samples: int = 1,
         lora_path: Optional[str] = None,
         out_dir: Optional[str] = None,
-        base_model: str = "black-forest-labs/FLUX.1-dev",  # Default to Flux if not specified
-        hf_token: Optional[str] = None
+        base_model: str = "black-forest-labs/FLUX.1-dev",
+        hf_token: Optional[str] = None,
+        seed: Optional[int] = None,
 ):
     from diffusers import AutoPipelineForText2Image
     import torch
@@ -1544,13 +1552,16 @@ def remote_generate(
         out_dir = f"{MOUNT_DIR}/generated/tmp_{uuid.uuid4().hex}"
     os.makedirs(out_dir, exist_ok=True)
 
+    base_seed = int(seed) if seed is not None else 1024
+    torch.manual_seed(base_seed)
+    logger.info("Using base seed %d", base_seed)
+
     saved_rel_paths = []
     for i in range(num_samples):
-        # Use a fresh generator for each image for variety
-        seed = 1024 + i
-        generator = torch.Generator(device=device).manual_seed(seed)
+        current_seed = base_seed + i
+        generator = torch.Generator(device=device).manual_seed(current_seed)
 
-        logger.info(f"Generating sample {i + 1}/{num_samples}...")
+        logger.info(f"Generating sample {i + 1}/{num_samples} with seed {current_seed}...")
         out = pipe(
             prompt,
             guidance_scale=3.5,
