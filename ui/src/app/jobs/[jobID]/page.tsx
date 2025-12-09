@@ -13,6 +13,8 @@ import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import { Job } from '@/utils/types';
 
+export const dynamic = 'force-static';
+
 // --- New Log Component ---
 const JobLogs = ({ job }: { job: Job }) => {
   // Poll every 2 seconds if running, otherwise stop polling
