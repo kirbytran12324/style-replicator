@@ -105,11 +105,16 @@ export const NumberInput = (props: NumberInputProps) => {
         type="number"
         value={inputValue}
         onChange={e => {
-          if (disabled) return; // Prevent change if disabled
+          if (disabled) return;
           const rawValue = e.target.value;
           setInputValue(rawValue);
 
-          if (rawValue === '' || rawValue === '-') {
+          if (rawValue === '') {
+            onChange(null);
+            return;
+          }
+
+          if (rawValue === '-') {
             return;
           }
 
@@ -357,7 +362,7 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
       ev.preventDefault();
       calcFromClientX(ev.clientX);
     };
-    const handleUp = (ev: PointerEvent) => {
+    const handleUp = (_ev: PointerEvent) => {
       setDragging(false);
       try {
         (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);

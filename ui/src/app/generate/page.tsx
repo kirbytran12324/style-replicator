@@ -19,11 +19,13 @@ export default function GeneratePage() {
   const [prompt, setPrompt] = useState('');
   const [numSamples, setNumSamples] = useState(1);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [seed, setSeed] = useState<number | null>(null);
 
   // New state for the base model, defaulting to Flux
   const [baseModel, setBaseModel] = useState('black-forest-labs/FLUX.1-dev');
 
   const [images, setImages] = useState<string[]>([]);
+  const [resultSeed, setResultSeed] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,14 +54,16 @@ export default function GeneratePage() {
     setLoading(true);
     setError(null);
     setImages([]);
+    setResultSeed(null);
 
     try {
       const res = await apiClient.post('/api/generate', {
         prompt,
         num_samples: numSamples,
         model_name: selectedModel || null,
-        base_model: baseModel,       // Send the base model
-        hf_token: settings.HF_TOKEN  // Send the auth token
+        base_model: baseModel,
+        hf_token: settings.HF_TOKEN,
+        seed,
       });
 
       if (res.data && res.data.images) {
@@ -75,6 +79,7 @@ export default function GeneratePage() {
         });
 
         setImages(processedImages);
+        setResultSeed(res.data?.seed ?? null);
       }
     } catch (e: any) {
       console.error(e);
@@ -143,6 +148,19 @@ export default function GeneratePage() {
                     disabled={loading}
                 />
               </div>
+              <div className="md:w-48">
+                <NumberInput
+                    label="Seed (optional)"
+                    value={seed}
+                    onChange={setSeed}
+                    min={0}
+                    max={2 ** 31 - 1}
+                    placeholder="Random"
+                    disabled={loading}
+                />
+                <p className="text-xs text-gray-500 mt-1">Leave blank for auto-generated.
+                </p>
+              </div>
             </div>
 
             <div className="flex justify-end pt-2">
@@ -170,15 +188,22 @@ export default function GeneratePage() {
           )}
 
           {images.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {images.map((img, i) => (
-                <ImageGenerator
-                  key={i}
-                  src={img}
-                  alt={`Generated image ${i + 1}`}
-                  index={i}
-                />
-              ))}
+            <div className="space-y-2">
+              {resultSeed !== null && (
+                <p className="text-sm text-gray-400">
+                  Seed used: <span className="font-mono text-gray-200">{resultSeed}</span>
+                </p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {images.map((img, i) => (
+                  <ImageGenerator
+                    key={i}
+                    src={img}
+                    alt={`Generated image ${i + 1}`}
+                    index={i}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>

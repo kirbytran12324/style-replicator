@@ -11,7 +11,7 @@ import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 import { useRouter } from 'next/navigation';
 
-export const runtime = 'edge';
+export const dynamic = 'force-static';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const router = useRouter();

@@ -13,7 +13,7 @@ import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import { Job } from '@/utils/types';
 
-export const runtime = 'edge';
+export const dynamic = 'force-static';
 
 // --- New Log Component ---
 const JobLogs = ({ job }: { job: Job }) => {

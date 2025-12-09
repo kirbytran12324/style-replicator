@@ -196,6 +196,7 @@ ui/out/
 ui/build/
 ui/.env.local
 ui/.env
+ui/.open-next
 
 modal_output/
 config/
