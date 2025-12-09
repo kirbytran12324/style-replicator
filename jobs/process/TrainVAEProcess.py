@@ -1010,6 +1010,14 @@ class TrainVAEProcess(BaseTrainProcess):
                 optimizer.step()
                 scheduler.step()
 
+                if self.step_num % 10 == 0:
+                    self._emit_progress(
+                        step=self.step_num,
+                        total=self.max_steps,
+                        phase='training',
+                        info={'loss': loss.item()}
+                    )
+
                 # update progress bar
                 loss_value = loss.item()
                 # get exponent like 3.54e-4

@@ -1,41 +1,35 @@
 'use client';
 
 import { useMemo, useEffect, useRef } from 'react';
-import { Info, Clock, CheckCircle, XCircle, PlayCircle, Loader2 } from 'lucide-react';
+import { Info, Loader2 } from 'lucide-react';
 import useJobLog from '@/hooks/useJobLog';
 import { Job } from '@/utils/types';
 
-// Helper to extract progress from log text
-const parseProgress = (logText: string) => {
-  if (!logText) return { current: 0, total: 0, percent: 0 };
-  
-  // Matches "Step: 150/2000" pattern
-  const stepMatch = logText.match(/Step:\s*(\d+)\s*\/\s*(\d+)/g);
-  
-  if (stepMatch && stepMatch.length > 0) {
-    const lastMatch = stepMatch[stepMatch.length - 1];
-    const parts = lastMatch.match(/Step:\s*(\d+)\s*\/\s*(\d+)/);
-    if (parts) {
-      const current = parseInt(parts[1]);
-      const total = parseInt(parts[2]);
-      return { current, total, percent: (current / total) * 100 };
-    }
-  }
-  return { current: 0, total: 0, percent: 0 };
-};
+const OVERVIEW_LOG_LINE_LIMIT = 25;
 
 interface JobOverviewProps {
   job: Job;
 }
 
 export default function JobOverview({ job }: JobOverviewProps) {
-  const { log, status: statusLog } = useJobLog(job.job_id || job.id || '', 2000); 
+  const { log, status: statusLog } = useJobLog(job.job_id || job.id || '', (job.status === 'running' || job.status === 'started') ? 2000 : null);
   const logRef = useRef<HTMLDivElement>(null);
-  
-  const progressInfo = useMemo(() => parseProgress(log), [log]);
+  const progressInfo = useMemo(() => {
+    const backend = job.progress;
+    const step = backend?.step ?? 0;
+    const total = backend?.total ?? 0;
+    const percent = backend?.percent ?? (total ? (step / total) * 100 : 0);
+    return {
+      current: step,
+      total,
+      percent,
+      message: backend?.message,
+      phase: backend?.phase,
+    };
+  }, [job.progress]);
 
   const logLines = useMemo(() => {
-    return log.split('\n').slice(-1000); 
+    return log.split('\n').slice(-OVERVIEW_LOG_LINE_LIMIT);
   }, [log]);
 
   useEffect(() => {
@@ -55,6 +49,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
           </h2>
           <span className={`px-3 py-1 rounded-full text-xs font-medium uppercase tracking-wide bg-gray-700 text-gray-300`}>
             {job.status}
+            {progressInfo.phase && ` · ${progressInfo.phase}`}
           </span>
         </div>
 
@@ -73,12 +68,18 @@ export default function JobOverview({ job }: JobOverviewProps) {
                 style={{ width: `${progressInfo.percent}%` }} 
               />
             </div>
-          </div>
+            {progressInfo.message && (
+              <div className="text-xs text-gray-400 font-mono">{progressInfo.message}</div>
+            )}
+           </div>
 
           {/* Log Window */}
           <div className="bg-gray-950 rounded-lg border border-gray-800 relative flex-grow min-h-[400px] flex flex-col">
             <div className="px-4 py-2 border-b border-gray-800 text-xs text-gray-500 font-mono uppercase tracking-wider">
               Live Logs
+            </div>
+            <div className="px-4 py-1 text-[11px] text-gray-500 border-b border-gray-900">
+              Showing last {OVERVIEW_LOG_LINE_LIMIT} lines. Open the Logs tab for the full log file.
             </div>
             <div
               ref={logRef}
@@ -89,13 +90,16 @@ export default function JobOverview({ job }: JobOverviewProps) {
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Connecting to remote logs...
                 </div>
               )}
-              {logLines.map((line, index) => (
-                <div key={index}>{line}</div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+              {statusLog === 'success' && logLines.length === 0 && (
+                <div className="text-gray-500">Logs will appear once the job starts writing to log.txt.</div>
+              )}
+               {logLines.map((line, index) => (
+                 <div key={index}>{line}</div>
+               ))}
+             </div>
+           </div>
+         </div>
+       </div>
 
       {/* Side Panel - Just Metadata now */}
       <div className="col-span-1 space-y-4">

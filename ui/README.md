@@ -20,17 +20,55 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Environment Variables
+
+Copy `.env.example` to `.env.local` and configure your environment variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Set your Modal API URL:
+```
+NEXT_PUBLIC_MODAL_API_URL=https://your-modal-api-url.modal.run
+```
+
+## Deploy on Cloudflare Pages
+
+This project is configured with [OpenNext](https://opennext.js.org/) for Cloudflare Pages deployment.
+
+### Prerequisites
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) installed
+- Cloudflare account
+
+### Local Preview
+```bash
+npm run preview
+```
+
+### Deploy to Cloudflare Pages
+```bash
+npm run deploy
+```
+
+### Setting Environment Variables in Cloudflare
+
+After deploying, set your environment variables in the Cloudflare dashboard:
+1. Go to Workers & Pages > your project > Settings > Environment Variables
+2. Add `NEXT_PUBLIC_MODAL_API_URL` with your Modal API URL
+
+Or via Wrangler CLI:
+```bash
+wrangler pages secret put NEXT_PUBLIC_MODAL_API_URL
+```
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
 
 - [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
 - [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [OpenNext Cloudflare](https://opennext.js.org/cloudflare) - OpenNext documentation for Cloudflare.
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

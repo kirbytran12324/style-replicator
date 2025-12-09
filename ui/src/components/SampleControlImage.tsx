@@ -27,7 +27,11 @@ export default function SampleControlImage({
 
   const backgroundUrl = useMemo(() => {
     if (localPreview) return localPreview;
-    if (src) return `/api/files/${encodeURIComponent(src)}`;
+    if (src) {
+        const baseUrl = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
+        const cleanBase = baseUrl.replace(/\/$/, '');
+        return `${cleanBase}/api/files/${src}`;
+    }
     return null;
   }, [src, localPreview]);
 

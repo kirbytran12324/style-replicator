@@ -4,9 +4,15 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
-import torchaudio
+try:
+    import torchaudio  # type: ignore[import]
+    _HAS_TORCHAUDIO = True
+except Exception:
+    torchaudio = None  # type: ignore[assignment]
+    _HAS_TORCHAUDIO = False
 
 from toolkit.prompt_utils import PromptEmbeds
+
 
 ImgExt = Literal['jpg', 'png', 'webp']
 
@@ -1144,12 +1150,15 @@ class GenerateImageConfig:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
         elif self.output_ext in ['wav', 'mp3']:
             # save audio file
+            if not _HAS_TORCHAUDIO:
+                raise RuntimeError(
+                    "Audio output requested (ext=`{self.output_ext}`) but torchaudio is not available."
+                )
+            # `image` here is expected to be a Tensor, delegate to torchaudio
             torchaudio.save(
-                self.get_image_path(count, max_count), 
-                image[0].to('cpu'),
-                sample_rate=48000, 
-                format=None, 
-                backend=None
+                self.get_image_path(count, max_count),
+                image,
+                sample_rate=44100,  # or whatever SR you use
             )
         else:
             # TODO save image gen header info for A1111 and us, our seeds probably wont match

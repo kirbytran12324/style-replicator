@@ -1,13 +1,13 @@
 from collections import OrderedDict
 from jobs import TrainJob
-from jobs.process import BaseTrainProcess
+from jobs.process import BaseSDTrainProcess  # Changed from BaseTrainProcess
 
 
-class TrainFineTuneProcess(BaseTrainProcess):
-    def __init__(self,process_id: int, job: TrainJob, config: OrderedDict):
+# Inherit from BaseSDTrainProcess to get the training loop and progress updates
+class TrainFineTuneProcess(BaseSDTrainProcess):
+    def __init__(self, process_id: int, job: TrainJob, config: OrderedDict):
         super().__init__(process_id, job, config)
 
-    def run(self):
-        # implement in child class
-        # be sure to call super().run() first
-        pass
+    def hook_train_loop(self, batch):
+        loss_dict = super().hook_train_loop(batch)
+        return loss_dict

@@ -1,8 +1,9 @@
 import importlib
 from collections import OrderedDict
-from typing import List
+from typing import List, Optional
 
 from jobs.process import BaseProcess
+from toolkit.progress_tracker import ProgressTracker
 
 
 class BaseJob:
@@ -10,7 +11,8 @@ class BaseJob:
     def __init__(self, config: OrderedDict):
         if not config:
             raise ValueError('config is required')
-        self.process: List[BaseProcess]
+        self.process: List[BaseProcess] = []
+        self.progress_tracker: Optional[ProgressTracker] = None
 
         self.config = config['config']
         self.raw_config = config
@@ -64,6 +66,17 @@ class BaseJob:
                 self.process.append(ProcessClass(i, self, process))
             else:
                 raise ValueError(f'config file is invalid. Unknown process type: {process["type"]}')
+
+        if self.progress_tracker is not None:
+            for proc in self.process:
+                if hasattr(proc, 'set_progress_tracker'):
+                    proc.set_progress_tracker(self.progress_tracker)
+
+    def set_progress_tracker(self, tracker: ProgressTracker):
+        self.progress_tracker = tracker
+        for proc in getattr(self, 'process', []):
+            if hasattr(proc, 'set_progress_tracker'):
+                proc.set_progress_tracker(tracker)
 
     def cleanup(self):
         # if you implement this in child clas,

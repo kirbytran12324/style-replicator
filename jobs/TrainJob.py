@@ -17,6 +17,7 @@ process_dict = {
     'rescale_sd': 'TrainSDRescaleProcess',
     'esrgan': 'TrainESRGANProcess',
     'reference': 'TrainReferenceProcess',
+    'sd_trainer': 'TrainFineTuneProcess',
 }
 
 
@@ -33,7 +34,8 @@ class TrainJob(BaseJob):
 
         # loads the processes from the config
         self.load_processes(process_dict)
-
+        if self.progress_tracker:
+            self.set_progress_tracker(self.progress_tracker)
 
     def run(self):
         super().run()

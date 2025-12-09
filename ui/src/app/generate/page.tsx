@@ -3,27 +3,49 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/utils/api';
 import { Button } from '@headlessui/react';
-import { TextInput, NumberInput, SelectInput } from '@/components/formInputs'; // Added SelectInput
+import { TextInput, NumberInput, SelectInput } from '@/components/formInputs';
 import { TopBar, MainContent } from '@/components/layout';
 import ImageGenerator from '@/components/ImageGenerator';
 import { Loader2, Sparkles, AlertCircle } from 'lucide-react';
-import useModelList from '@/hooks/useModelList'; // Import the new hook
+import useModelList from '@/hooks/useModelList';
+import useSettings from '@/hooks/useSettings'; // Import settings hook
 
 export default function GeneratePage() {
+  // We assume models is now a list of objects { name: string, base_model: string }
+  // based on the previous step's plan.
   const { models, isLoading: modelsLoading } = useModelList();
+  const { settings } = useSettings(); // Get the token
 
   const [prompt, setPrompt] = useState('');
   const [numSamples, setNumSamples] = useState(1);
-  const [selectedModel, setSelectedModel] = useState<string>(''); // For the dropdown
+  const [selectedModel, setSelectedModel] = useState<string>('');
+
+  // New state for the base model, defaulting to Flux
+  const [baseModel, setBaseModel] = useState('black-forest-labs/FLUX.1-dev');
+
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Convert models string array to options format for SelectInput
+  // Convert models array to options format
+  // Note: We access m.name since models are now objects
   const modelOptions = [
-    { value: '', label: 'None (Base Model)' },
-    ...models.map(m => ({ value: m, label: m }))
+    { value: '', label: 'None (Base Model Only)' },
+    ...models.map(m => ({ value: m.name, label: m.name }))
   ];
+
+  // Auto-update the Base Model input when a LoRA is selected
+  useEffect(() => {
+    if (!selectedModel) return;
+
+    // Find the metadata for the selected LoRA
+    const modelInfo = models.find(m => m.name === selectedModel);
+
+    // If we found it and it has a base_model recorded, update the input
+    if (modelInfo && modelInfo.base_model) {
+        setBaseModel(modelInfo.base_model);
+    }
+  }, [selectedModel, models]);
 
   const handleGenerate = async () => {
     if (!prompt) return;
@@ -35,21 +57,18 @@ export default function GeneratePage() {
       const res = await apiClient.post('/api/generate', {
         prompt,
         num_samples: numSamples,
-        model_name: selectedModel || null
+        model_name: selectedModel || null,
+        base_model: baseModel,       // Send the base model
+        hf_token: settings.HF_TOKEN  // Send the auth token
       });
 
       if (res.data && res.data.images) {
-        // Get the base API URL from env, ensuring no trailing slash
         const baseUrl = (process.env.NEXT_PUBLIC_MODAL_API_URL || '').replace(/\/$/, '');
 
         const processedImages = res.data.images.map((img: string) => {
-          // If the backend returned a relative path (starts with /), make it a full URL
-          // If it returned Base64 (starts with data:), leave it alone
-          // If it is a relative path without leading /, add one.
           if (img.startsWith('/')) {
             return `${baseUrl}${img}`;
           } else if (!img.startsWith('data:')) {
-             // Handle relative paths like "generated/..." returned by some backend versions
              return `${baseUrl}/api/files/${img}`;
           }
           return img;
@@ -74,18 +93,36 @@ export default function GeneratePage() {
         <div className="max-w-4xl mx-auto space-y-8 pb-20">
           <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6 shadow-lg">
 
-            {/* Model Selection */}
-            <div className="max-w-md">
-                <SelectInput
-                    label="Select Trained Model (LoRA)"
-                    value={selectedModel}
-                    onChange={setSelectedModel}
-                    options={modelOptions}
-                    disabled={modelsLoading}
-                    placeholder={modelsLoading ? "Loading models..." : "Select a model"}
-                />
+            {/* Models Configuration Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Base Model Input */}
+                <div>
+                    <TextInput
+                        label="Base Model (HuggingFace ID)"
+                        value={baseModel}
+                        onChange={setBaseModel}
+                        placeholder="black-forest-labs/FLUX.1-dev"
+                        disabled={loading}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                        If using a LoRA, this will auto-fill with the training model.
+                    </p>
+                </div>
+
+                {/* LoRA Selection */}
+                <div>
+                    <SelectInput
+                        label="Select Trained Model (LoRA)"
+                        value={selectedModel}
+                        onChange={setSelectedModel}
+                        options={modelOptions}
+                        disabled={modelsLoading}
+                        placeholder={modelsLoading ? "Loading models..." : "Select a model"}
+                    />
+                </div>
             </div>
 
+            {/* Prompt & Generation Controls */}
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-grow">
                 <TextInput

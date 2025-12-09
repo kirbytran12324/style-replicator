@@ -45,11 +45,14 @@ export default function SampleImageViewer({
 
   const onCancel = useCallback(() => setIsOpen(false), []);
 
+  const baseUrl = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
+    return url.replace(/\/$/, '');
+  }, []);
+
   const imgInfo = useMemo(() => {
-    // handle windows C:\\Apps\\AI-Toolkit\\AI-Toolkit\\output\\LoRA-Name\\samples\\1763563000704__000004000_0.jpg
     const ii = { filename: '', step: 0, promptIdx: 0 };
     if (imgPath) {
-      // handle windows
       let filename: string | null = null;
       if (imgPath.includes('\\')) {
         const parts = imgPath.split('\\');
@@ -128,7 +131,6 @@ export default function SampleImageViewer({
     if (!imgPath) return [];
     let controlImageArr: string[] = [];
     if (sampleItem?.ctrl_img) {
-      // can be a an array of paths, or a single path
       if (Array.isArray(sampleItem.ctrl_img)) {
         controlImageArr = sampleItem.ctrl_img;
       } else {
@@ -143,7 +145,6 @@ export default function SampleImageViewer({
     if (sampleItem?.ctrl_img_3) {
       controlImageArr.push(sampleItem.ctrl_img_3);
     }
-    // filter out nulls
     controlImageArr = controlImageArr.filter(ci => ci !== null && ci !== undefined && ci !== '');
     return controlImageArr;
   }, [sampleItem, imgPath]);
@@ -157,7 +158,6 @@ export default function SampleImageViewer({
     return sampleConfig?.seed ?? '?';
   }, [sampleItem, sampleConfig]);
 
-  // keyboard events while open
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isOpen) return;
@@ -202,13 +202,12 @@ export default function SampleImageViewer({
             <div className="overflow-hidden flex items-center justify-center">
               {imgPath && (
                 <img
-                  src={`/api/files/${encodeURIComponent(imgPath)}`}
+                  src={`${baseUrl}/api/files/${imgPath}`}
                   alt="Sample Image"
                   className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
                 />
               )}
             </div>
-            {/* # make full width */}
             <div className="bg-gray-950 text-sm flex justify-between items-center px-4 py-2">
               <div className="flex-1 relative h-10 min-w-0">
                 {sampleItem?.prompt && (
@@ -225,7 +224,7 @@ export default function SampleImageViewer({
                   {controlImages.map((ci, idx) => (
                     <img
                       key={idx}
-                      src={`/api/files/${encodeURIComponent(ci)}`}
+                      src={`${baseUrl}/api/files/${ci}`}
                       alt={`Control ${idx + 1}`}
                       className="max-h-12 max-w-12 object-contain bg-black border border-gray-700 rounded"
                     />
