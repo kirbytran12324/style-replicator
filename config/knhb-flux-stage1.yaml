@@ -1,0 +1,83 @@
+---
+job: extension
+config:
+  name: "knhb_flux_stage1"
+
+  process:
+    - type: 'sd_trainer'
+      training_folder: "/root/ai-toolkit/modal_output"
+      sqlite_db_path: "/root/ai-toolkit/aitk_db.db"
+
+      device: cuda:0
+      performance_log_every: 10
+
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+        conv: 16
+        conv_alpha: 16
+        lokr_full_rank: true
+        lokr_factor: -1
+        network_kwargs:
+          ignore_if_contains: []
+
+      save:
+        dtype: fp16
+        save_every: 250
+        max_step_saves_to_keep: 4
+        save_format: "diffusers"
+        push_to_hub: false
+
+      datasets:
+        - folder_path: "/root/ai-toolkit/datasets/knhb"
+          caption_ext: "txt"
+          default_caption: "An illustration of Pokemon, <knhb-style>"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          is_reg: false
+          network_weight: 1
+          resolution: [512, 768, 1024]
+          controls: []
+          shrink_video_to_frames: true
+          num_frames: 1
+          do_i2v: true
+
+      train:
+        batch_size: 2
+        steps: 800
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        optimizer_params:
+          weight_decay: 0.0001
+        lr: 0.0001
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+        disable_sampling: true
+        dtype: bf16
+
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true
+        low_vram: false
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 1000   # ignored because disable_sampling: true
+        width: 1024
+        height: 1024
+        prompts:
+          - "An illustration of Pokemon, <knhb-style>"
+        seed: 42
+        guidance_scale: 4
+        sample_steps: 20
+
+meta:
+  name: "[name]"
+  version: '1.0'
