@@ -149,6 +149,9 @@ image = (
         "bitsandbytes pytorch_fid sentencepiece pytorch-wavelets matplotlib diffusers fastapi[standard] "
         "python-multipart modal || true"
     )
+    .run_commands(
+        "pip install git+https://github.com/huggingface/diffusers.git",
+    )
     .env({
         "HUGGINGFACE_HUB_TOKEN": os.environ.get("HF_TOKEN", ""),
         "CUDA_VISIBLE_DEVICES": "0",
@@ -706,6 +709,10 @@ async def get_job_config(job_id: str, user_id: str = Depends(get_current_user_id
 # ------------------------------------------------------------
 @api.get("/api/datasets")
 async def list_datasets(user_id: str = Depends(get_current_user_id)):
+    try:
+        model_volume.reload()
+    except Exception as e:
+        logger.debug("model_volume.reload() failed before listing datasets: %s", e)
     ds_root = get_user_dataset_path(user_id)
     return [d.name for d in ds_root.iterdir() if d.is_dir()]
 
@@ -1160,7 +1167,7 @@ def volume_cleanup_task(paths: List[str]) -> int:
 
 
 @app.function(
-    gpu="A100",
+    gpu="A100-80GB",
     timeout=28800,
     image=image,
     volumes={MOUNT_DIR: model_volume, CACHE_DIR: hf_volume},
