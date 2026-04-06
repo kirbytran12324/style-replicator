@@ -106,6 +106,19 @@ If you want to understand or extend Flux 2 klein support, check:
 3. The worker loads the base model and optional LoRA
 4. Images are written to the output volume and returned as file URLs
 
+## Wheelhouse Download (Required For Deploy)
+
+If you are deploying this project to Modal from a fresh clone, you may need to download the prebuilt wheels first.
+
+Download link:
+- https://drive.google.com/drive/folders/1RWj8Ps7LWY8h02uQMuLLLw9zynyRP1My?usp=sharing
+
+Important:
+- Extract everything into a folder named `wheelhouse` at the repository root.
+- Final expected path should be `ai-toolkit/wheelhouse/`.
+- `run_modal.py` references this path during Modal image build (`add_local_dir(.../wheelhouse, remote_path="/root/wheels")`), so missing it can break deploy.
+
+
 ## Modal-First Usage Notes
 
 Most of the real execution happens on Modal, so this repo is not primarily a "clone it and run everything locally" setup.
@@ -113,7 +126,7 @@ Most of the real execution happens on Modal, so this repo is not primarily a "cl
 Useful entrypoints:
 
 ```cmd
-modal serve run_modal.py
+modal deploy run_modal.py
 ```
 
 For direct CLI-style execution of a config:
