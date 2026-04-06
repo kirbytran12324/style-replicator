@@ -9,12 +9,11 @@ import ImageGenerator from '@/components/ImageGenerator';
 import { Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import useModelList from '@/hooks/useModelList';
 import useSettings from '@/hooks/useSettings'; // Import settings hook
-
 export default function GeneratePage() {
   // We assume models is now a list of objects { name: string, base_model: string }
   // based on the previous step's plan.
   const { models, isLoading: modelsLoading } = useModelList();
-  const { settings } = useSettings(); // Get the token
+  const { models, isLoading: modelsLoading } = useModelList();
 
   const [prompt, setPrompt] = useState('');
   const [numSamples, setNumSamples] = useState(1);
@@ -124,11 +123,7 @@ export default function GeneratePage() {
                         disabled={modelsLoading}
                         placeholder={modelsLoading ? "Loading models..." : "Select a model"}
                     />
-                </div>
-            </div>
-
-            {/* Prompt & Generation Controls */}
-            <div className="flex flex-col md:flex-row gap-4">
+                    {modelsLoading && <p className="text-xs text-blue-400 mt-1">Fetching models...</p>}
               <div className="flex-grow">
                 <TextInput
                     label="Prompt"
@@ -188,12 +183,12 @@ export default function GeneratePage() {
           )}
 
           {images.length > 0 && (
+            <div className="space-y-2 relative">
+              {loading && (
+                <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center z-10 rounded-lg">
+                  <Loading label="Generating" />
+                </div>
             <div className="space-y-2">
-              {resultSeed !== null && (
-                <p className="text-sm text-gray-400">
-                  Seed used: <span className="font-mono text-gray-200">{resultSeed}</span>
-                </p>
-              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {images.map((img, i) => (
                   <ImageGenerator
@@ -206,8 +201,8 @@ export default function GeneratePage() {
               </div>
             </div>
           )}
-        </div>
-      </MainContent>
-    </>
-  );
-}
+
+          {loading && images.length === 0 && (
+            <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-6 text-center">
+              <Loading label="Generating" />
+              <p className="text-sm text-gray-400 mt-2">This can take up to a minute depending on your model.</p>

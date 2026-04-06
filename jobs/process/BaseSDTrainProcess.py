@@ -754,6 +754,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for param in group['params']:
                 if isinstance(param, torch.nn.Parameter):  # Ensure it's a proper parameter
                     param.requires_grad_(True)
+        # generate_images uses 'with network:' which resets is_active to False on exit;
+        # restore it here so LoRA layers are applied during the training forward pass
+        if hasattr(self, 'network') and self.network is not None:
+            self.network.is_active = True
 
     def setup_ema(self):
         if self.train_config.ema_config.use_ema:
@@ -1534,6 +1538,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 arch = 'pixart'
             if self.model_config.is_flux:
                 arch = 'flux'
+            if self.model_config.is_flux2_klein:
+                arch = 'flux'
             if self.model_config.is_lumina2:
                 arch = 'lumina2'
             sampler = get_sampler(
@@ -1729,6 +1735,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_pixart=self.model_config.is_pixart,
                     is_auraflow=self.model_config.is_auraflow,
                     is_flux=self.model_config.is_flux,
+                    is_flux2_klein=self.model_config.is_flux2_klein,
                     is_lumina2=self.model_config.is_lumina2,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
@@ -1779,6 +1786,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
 
                 self.network.prepare_grad_etc(text_encoder, unet)
+                # Activate the network for training so LoRA layers are applied during forward pass
+                self.network.is_active = True
                 flush()
 
                 # LyCORIS doesnt have default_lr
@@ -1999,6 +2008,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")
             self.sample(0, is_first=True)
+            # Sampling puts network into eval mode — restore requires_grad on LoRA params
+            self.ensure_params_requires_grad(force=True)
+            optimizer.zero_grad()
 
         # sample first
         if self.train_config.skip_first_sample or self.train_config.disable_sampling:
@@ -2006,6 +2018,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
+            # Sampling puts network into eval mode — restore requires_grad on LoRA params
+            self.ensure_params_requires_grad(force=True)
+            optimizer.zero_grad()
         
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(

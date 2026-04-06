@@ -466,6 +466,21 @@ export const modelArchs: ModelArch[] = [
     additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
   },
   {
+    name: 'flux2_klein',
+    label: 'FLUX.2 Klein (4B)',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-klein-4B', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.qtype': ['qint8', 'qfloat8'],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
+  },
+  {
     name: 'flux2',
     label: 'FLUX.2',
     group: 'image',

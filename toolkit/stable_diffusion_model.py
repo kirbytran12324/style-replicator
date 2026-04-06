@@ -69,7 +69,20 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
 from diffusers import FluxFillPipeline
+try:
+    from diffusers import Flux2KleinPipeline
+    from diffusers import Flux2Transformer2DModel
+    from diffusers.models.autoencoders.autoencoder_kl_flux2 import AutoencoderKLFlux2
+except ImportError:
+    Flux2KleinPipeline = None
+    Flux2Transformer2DModel = None
+    AutoencoderKLFlux2 = None
 from transformers import AutoModel, AutoTokenizer, Gemma2Model, Qwen2Model, LlamaModel
+try:
+    from transformers import Qwen3ForCausalLM, Qwen2TokenizerFast
+except ImportError:
+    Qwen3ForCausalLM = None
+    Qwen2TokenizerFast = None
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -307,6 +320,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+
+    @property
+    def is_flux2_klein(self):
+        return self.arch == 'flux2_klein'
     
     @property
     def unet_unwrapped(self):
@@ -317,8 +334,8 @@ class StableDiffusion:
             return 16
         divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
         
-        # flux packs this again,
-        if self.is_flux or self.is_v3:
+        # flux and flux2_klein both pack the latents, requiring double divisibility
+        if self.is_flux or self.is_v3 or self.is_flux2_klein:
             divisibility = divisibility * 2
         return divisibility * 2 # todo remove this
         
@@ -892,6 +909,62 @@ class StableDiffusion:
             text_encoder[1].eval()
             pipe.transformer = pipe.transformer.to(self.device_torch)
             flush()
+        elif self.model_config.is_flux2_klein:
+            if Flux2KleinPipeline is None:
+                raise ImportError(
+                    "Flux2KleinPipeline not found. Install the dev version of diffusers: "
+                    "pip install git+https://github.com/huggingface/diffusers.git"
+                )
+            self.print_and_status_update("Loading Flux.2 Klein model via from_pretrained")
+            base_model_path = self.model_config.name_or_path_original
+
+            # Load the full pipeline at once — this ensures the correct classes are used:
+            #   Flux2Transformer2DModel, AutoencoderKLFlux2, Qwen3ForCausalLM, Qwen2TokenizerFast
+            pipe: Flux2KleinPipeline = Flux2KleinPipeline.from_pretrained(
+                base_model_path,
+                torch_dtype=dtype,
+            )
+            flush()
+
+            transformer = pipe.transformer
+            text_encoder = pipe.text_encoder
+            tokenizer = pipe.tokenizer
+            vae = pipe.vae
+
+            # Quantize transformer if enabled
+            if self.model_config.quantize:
+                patch_dequantization_on_save(transformer)
+                self.print_and_status_update("Quantizing transformer")
+                # Use quantize_model for proper handling of transformer blocks
+                from toolkit.util.quantize import quantize_model
+                quantize_model(self, transformer)
+                transformer.to(self.device_torch)
+            else:
+                transformer.to(self.device_torch, dtype=dtype)
+            flush()
+
+            # Klein uses Qwen3 — TE quantization is generally not needed and may cause issues
+            if self.model_config.quantize_te:
+                self.print_and_status_update("Quantizing Qwen3 text encoder")
+                text_encoder.to(self.quantize_device, dtype=dtype)
+                quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+                freeze(text_encoder)
+            text_encoder.to(self.device_torch, dtype=dtype)
+            flush()
+
+            # Put components back on the pipeline
+            pipe.transformer = transformer
+            pipe.text_encoder = text_encoder
+
+            self.print_and_status_update("Preparing Model")
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+            flush()
+            text_encoder.to(self.device_torch)
+            text_encoder.requires_grad_(False)
+            text_encoder.eval()
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+            flush()
+
         elif self.model_config.is_lumina2:
             self.print_and_status_update("Loading Lumina2 model")
             # base_model_path = "black-forest-labs/FLUX.1-schnell"
@@ -1060,8 +1133,8 @@ class StableDiffusion:
         # add hacks to unet to help training
         # pipe.unet = prepare_unet_for_training(pipe.unet)
 
-        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2:
-            # pixart and sd3 dont use a unet
+        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2 or self.is_flux2_klein:
+            # pixart, sd3, flux, flux2_klein etc. dont use a unet
             self.unet = pipe.transformer
         else:
             self.unet: 'UNet2DConditionModel' = pipe.unet
@@ -1336,6 +1409,15 @@ class StableDiffusion:
                     )
                     
                 pipeline.watermark = None
+            elif self.is_flux2_klein:
+                pipeline = Flux2KleinPipeline(
+                    vae=self.vae,
+                    transformer=unwrap_model(self.unet),
+                    text_encoder=unwrap_model(self.text_encoder),
+                    tokenizer=self.tokenizer,
+                    scheduler=noise_scheduler,
+                    **extra_args
+                )
             elif self.is_lumina2:
                 pipeline = Lumina2Pipeline(
                     vae=self.vae,
@@ -1664,6 +1746,28 @@ class StableDiffusion:
                                 callback_on_step_end=callback_on_step_end,
                                 **extra
                             ).images[0]
+                    elif self.is_flux2_klein:
+                        # Pass prompt string directly — pipeline handles encoding, latent_ids, etc.
+                        # Do NOT pass prompt_embeds here because the pipeline needs to set up text_ids too.
+                        def callback_on_step_end(pipe, i, t, callback_kwargs):
+                            latents = callback_kwargs["latents"]
+                            if latents.dtype != self.unet.dtype:
+                                latents = latents.to(self.unet.dtype)
+                            return {"latents": latents}
+                        raw_prompt = conditional_embeds.text_embeds  # we stash the prompt string here
+                        if not isinstance(raw_prompt, str):
+                            raw_prompt = gen_config.prompt if isinstance(gen_config.prompt, str) else \
+                                (gen_config.prompt[0] if isinstance(gen_config.prompt, list) else "")
+                        img = pipeline(
+                            prompt=raw_prompt,
+                            height=gen_config.height,
+                            width=gen_config.width,
+                            num_inference_steps=gen_config.num_inference_steps,
+                            guidance_scale=gen_config.guidance_scale,
+                            latents=gen_config.latents,
+                            generator=generator,
+                            callback_on_step_end=callback_on_step_end,
+                        ).images[0]
                     elif self.is_lumina2:
                         pipeline: Lumina2Pipeline = pipeline
 
@@ -1833,7 +1937,7 @@ class StableDiffusion:
 
         if num_channels is None:
             num_channels = self.unet_unwrapped.config['in_channels']
-            if self.is_flux:
+            if self.is_flux or self.is_flux2_klein:
                 # it gets packed, unpack it
                 num_channels = num_channels // 4
         noise = torch.randn(
@@ -2227,7 +2331,7 @@ class StableDiffusion:
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
-                        # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                        # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for testing)
                         # todo make sure this doesnt change
                         timestep=timestep / 1000,  # timestep is 1000 scale
                         encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
@@ -2256,6 +2360,60 @@ class StableDiffusion:
                     
                     if bypass_guidance_embedding:
                         restore_flux_guidance(self.unet)
+                elif self.is_flux2_klein:
+                    # Klein uses Flux2Transformer2DModel with 4D position coordinates (t, h, w, l)
+                    # and NO pooled projections. We use the pipeline helpers to build the ids.
+                    cast_dtype = self.unet.dtype
+                    bs, c, h, w = latent_model_input.shape
+
+                    # Patchify: (B, C, H, W) -> (B, H//2*W//2, C*4) using 2x2 patch packing
+                    packed_latents = rearrange(
+                        latent_model_input.to(self.device_torch, cast_dtype),
+                        "b c (h ph) (w pw) -> b (h w) (c ph pw)",
+                        ph=2,
+                        pw=2,
+                    )
+
+                    # 4D latent position ids — must match the patchified (H//2, W//2) grid
+                    latent_ids = self.pipeline._prepare_latent_ids(latent_model_input[:, :, ::2, ::2])
+                    latent_ids = latent_ids.to(self.device_torch)
+
+                    # text_ids from encode_prompt (stored as pe.text_ids), or fallback
+                    if hasattr(text_embeddings, 'text_ids') and text_embeddings.text_ids is not None:
+                        txt_ids = text_embeddings.text_ids.to(self.device_torch)
+                    else:
+                        # fallback: derive text_ids from the embed shape using pipeline helper
+                        _, txt_ids = self.pipeline.encode_prompt(prompt="")
+                        txt_ids = txt_ids.to(self.device_torch)
+
+                    noise_pred = self.unet(
+                        hidden_states=packed_latents,
+                        timestep=timestep / 1000,
+                        guidance=None,  # Klein does not use guidance embedding
+                        encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
+                        txt_ids=txt_ids,
+                        img_ids=latent_ids,
+                        joint_attention_kwargs=None,
+                        return_dict=False,
+                    )[0]
+
+                    if isinstance(noise_pred, QTensor):
+                        noise_pred = noise_pred.dequantize()
+
+                    # Unpack: remove noise tokens beyond latent length
+                    noise_pred = noise_pred[:, :packed_latents.size(1), :]
+
+                    # Convert packed output back to latent map shape expected by schedulers.
+                    noise_pred = rearrange(
+                        noise_pred,
+                        "b (h w) (c ph pw) -> b c (h ph) (w pw)",
+                        h=h // 2,
+                        w=w // 2,
+                        ph=2,
+                        pw=2,
+                        c=self.vae.config.latent_channels,
+                    )
+
                 elif self.is_lumina2:
                     # reverse the timestep since Lumina uses t=0 as the noise and t=1 as the image
                     t = 1 - timestep / self.noise_scheduler.config.num_train_timesteps
@@ -2517,6 +2675,20 @@ class StableDiffusion:
             pe.pooled_embeds = pooled_prompt_embeds
             return pe
 
+        elif self.is_flux2_klein:
+            # normalize: the unconditional prompt comes in as False/None — convert to ""
+            raw_prompt = prompt[0] if isinstance(prompt, list) else prompt
+            if not isinstance(raw_prompt, str):
+                raw_prompt = ""
+            # encode_prompt returns (prompt_embeds, text_ids) — no pooled embeds for Klein
+            prompt_embeds, text_ids = self.pipeline.encode_prompt(
+                prompt=raw_prompt,
+            )
+            pe = PromptEmbeds(prompt_embeds)
+            # stash text_ids and raw prompt in case generate_images or predict_noise needs them
+            pe.text_ids = text_ids
+            pe.pooled_embeds = None  # Klein does not use pooled projections
+            return pe
         elif self.is_lumina2:
             (
                 prompt_embeds,
@@ -2601,11 +2773,16 @@ class StableDiffusion:
             latents = self.vae.encode(images, return_dict=False)[0]
         else:
             latents = self.vae.encode(images).latent_dist.sample()
-        shift = self.vae.config['shift_factor'] if self.vae.config['shift_factor'] is not None else 0
+        vae_cfg = self.vae.config
+        scaling_factor = vae_cfg.get('scaling_factor', 1.0) if hasattr(vae_cfg, 'get') else vae_cfg['scaling_factor']
+        # Some VAEs (including certain FLUX2 Klein variants) do not define shift_factor.
+        shift = vae_cfg.get('shift_factor', 0.0) if hasattr(vae_cfg, 'get') else vae_cfg['shift_factor']
+        if shift is None:
+            shift = 0.0
 
         # flux ref https://github.com/black-forest-labs/flux/blob/c23ae247225daba30fbd56058d247cc1b1fc20a3/src/flux/modules/autoencoder.py#L303
         # z = self.scale_factor * (z - self.shift_factor)
-        latents = self.vae.config['scaling_factor'] * (latents - shift)
+        latents = scaling_factor * (latents - shift)
         latents = latents.to(device, dtype=dtype)
 
         return latents
@@ -2625,7 +2802,12 @@ class StableDiffusion:
         if self.vae.device == 'cpu':
             self.vae.to(self.device_torch)
         latents = latents.to(self.device_torch, dtype=self.torch_dtype)
-        latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
+        vae_cfg = self.vae.config
+        scaling_factor = vae_cfg.get('scaling_factor', 1.0) if hasattr(vae_cfg, 'get') else vae_cfg['scaling_factor']
+        shift = vae_cfg.get('shift_factor', 0.0) if hasattr(vae_cfg, 'get') else vae_cfg['shift_factor']
+        if shift is None:
+            shift = 0.0
+        latents = (latents / scaling_factor) + shift
         images = self.vae.decode(latents).sample
         images = images.to(device, dtype=dtype)
 
@@ -2767,7 +2949,7 @@ class StableDiffusion:
         refiner_config_path = os.path.join(ORIG_CONFIGS_ROOT, 'sd_xl_refiner.yaml')
         # load the refiner model
         dtype = get_torch_dtype(self.dtype)
-        model_path = self.model_config._original_refiner_name_or_path
+        model_path = self.model_config.refiner_name_or_path
         if not os.path.exists(model_path) or os.path.isdir(model_path):
             # TODO only load unet??
             refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
@@ -2945,6 +3127,49 @@ class StableDiffusion:
 
         return trainable_parameters
 
+    def _get_text_encoder_requires_grad(self, encoder):
+        """Safely get the requires_grad status from any text encoder model."""
+        # Try different approaches depending on model type
+        try:
+            if isinstance(encoder, (T5EncoderModel, UMT5EncoderModel)):
+                return encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+        except:
+            pass
+        
+        try:
+            if isinstance(encoder, (Gemma2Model, Qwen2Model, LlamaModel)):
+                return encoder.layers[0].mlp.gate_proj.weight.requires_grad
+        except:
+            pass
+        
+        # Try accessing layers attribute if it exists
+        try:
+            return encoder.layers[0].mlp.gate_proj.weight.requires_grad
+        except:
+            pass
+        
+        # Try accessing text_model attribute (for CLIP-based models)
+        try:
+            return encoder.text_model.final_layer_norm.weight.requires_grad
+        except:
+            pass
+        
+        # Try T5 encoder structure
+        try:
+            return encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+        except:
+            pass
+        
+        # Last resort: get first parameter's requires_grad status
+        try:
+            for param in encoder.parameters():
+                return param.requires_grad
+        except:
+            pass
+        
+        # If all else fails, assume gradients are enabled
+        return False
+
     def save_device_state(self):
         # saves the current device state for all modules
         # this is useful for when we want to alter the state and restore it
@@ -2965,31 +3190,14 @@ class StableDiffusion:
         if isinstance(self.text_encoder, list):
             self.device_state['text_encoder']: List[dict] = []
             for encoder in self.text_encoder:
-                if isinstance(encoder, LlamaModel):
-                    te_has_grad = encoder.layers[0].mlp.gate_proj.weight.requires_grad
-                else:
-                    try:
-                        te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
-                    except:
-                        te_has_grad = encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+                te_has_grad = self._get_text_encoder_requires_grad(encoder)
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,
-                    # todo there has to be a better way to do this
                     'requires_grad': te_has_grad
                 })
         else:
-            if isinstance(self.text_encoder, T5EncoderModel) or isinstance(self.text_encoder, UMT5EncoderModel):
-                te_has_grad = self.text_encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
-            elif isinstance(self.text_encoder, Gemma2Model):
-                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
-            elif isinstance(self.text_encoder, Qwen2Model):
-                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
-            elif isinstance(self.text_encoder, LlamaModel):
-                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
-            else:
-                te_has_grad = self.text_encoder.text_model.final_layer_norm.weight.requires_grad
-
+            te_has_grad = self._get_text_encoder_requires_grad(self.text_encoder)
             self.device_state['text_encoder'] = {
                 'training': self.text_encoder.training,
                 'device': self.text_encoder.device,
@@ -3181,6 +3389,8 @@ class StableDiffusion:
     
     def get_transformer_block_names(self) -> Optional[List[str]]:
         # override in child classes to get transformer block names for lora targeting
+        if self.is_flux2_klein:
+            return ["single_transformer_blocks"]
         return None
     
     def get_base_model_version(self) -> str:
@@ -3192,6 +3402,8 @@ class StableDiffusion:
             return 'auraflow'
         if self.is_flux:
             return 'flux.1'
+        if self.is_flux2_klein:
+            return 'flux.2_klein'
         if self.is_lumina2:
             return 'lumina2'
         if self.is_ssd:

@@ -13,3 +13,4 @@ from .GenerateProcess import GenerateProcess
 from .BaseExtensionProcess import BaseExtensionProcess
 from .TrainESRGANProcess import TrainESRGANProcess
 from .BaseSDTrainProcess import BaseSDTrainProcess
+from .TrainFineTuneProcess import TrainFineTuneProcess

@@ -1,7 +1,7 @@
 import json
 import os
 
-from jobs import BaseJob
+from jobs.BaseJob import BaseJob
 from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoint
 from collections import OrderedDict
 from typing import List
