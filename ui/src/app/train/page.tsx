@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { defaultJobConfig, defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/utils/types';
@@ -22,35 +22,37 @@ const MOCK_GPU_LIST = [{ index: 0, name: "Cloud A100 (Managed)" }];
 export default function TrainingForm() {
   const router = useRouter();
   const [gpuIDs, setGpuIDs] = useState<string | null>("0");
-  const { settings, isSettingsLoaded } = useSettings();
+  const { settings } = useSettings();
   const { datasets, status: datasetFetchStatus } = useDatasetList();
-  const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
   const [showAdvancedView, setShowAdvancedView] = useState(false);
+  const didAutoSelectDataset = useRef(false);
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
-  // Populate dataset dropdown
-  useEffect(() => {
-    if (datasetFetchStatus !== 'success') return;
-
-    // Modal paths are virtual, but we keep the structure consistent
-    // The value here is what gets sent to the python script
-    const datasetOptions = datasets.map(name => ({
-        value: `/root/modal_output/datasets/${name}`,
-        label: name
+  const datasetOptions = useMemo(() => {
+    if (datasetFetchStatus !== 'success') return [];
+    // Modal paths are virtual, but we keep the structure consistent.
+    return datasets.map(name => ({
+      value: `/root/modal_output/datasets/${name}`,
+      label: name,
     }));
-    setDatasetOptions(datasetOptions);
+  }, [datasets, datasetFetchStatus]);
 
-    // Auto-select first dataset if default is still set
+  // Auto-select a real dataset once if defaults are still present.
+  useEffect(() => {
+    if (didAutoSelectDataset.current) return;
+    if (datasetOptions.length === 0) return;
+
     const defaultDatasetPath = defaultDatasetConfig.folder_path;
     for (let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
       const dataset = jobConfig.config.process[0].datasets[i];
-      if (dataset.folder_path === defaultDatasetPath && datasetOptions.length > 0) {
+      if (dataset.folder_path === defaultDatasetPath) {
         setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
       }
     }
-  }, [datasets, datasetFetchStatus]);
+    didAutoSelectDataset.current = true;
+  }, [datasetOptions, jobConfig.config.process, setJobConfig]);
 
   const saveJob = async () => {
     if (status === 'saving') return;

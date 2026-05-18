@@ -7,9 +7,6 @@ if (process.env.NODE_ENV === "development") {
 
 
 const nextConfig: NextConfig = {
-  devIndicators: {
-    buildActivity: false,
-  },
   typescript: {
     ignoreBuildErrors: true,
   },

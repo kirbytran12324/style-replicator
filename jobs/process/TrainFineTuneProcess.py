@@ -78,21 +78,23 @@ class TrainFineTuneProcess(BaseSDTrainProcess):
 
         # self.params is a list of optimizer param group dicts: [{"params": [...], "lr": ...}, ...]
         # Flatten to a single list of tensors that actually have gradients.
-        parameters = []
-        for group in self.params:
-            if isinstance(group, dict):
-                for p in group.get('params', []):
-                    if isinstance(p, torch.Tensor) and p.grad is not None:
-                        parameters.append(p)
-            elif isinstance(group, torch.Tensor) and group.grad is not None:
-                parameters.append(group)
+        should_step = not self.is_grad_accumulation_step
+        if should_step:
+            parameters = []
+            for group in self.params:
+                if isinstance(group, dict):
+                    for p in group.get('params', []):
+                        if isinstance(p, torch.Tensor) and p.grad is not None:
+                            parameters.append(p)
+                elif isinstance(group, torch.Tensor) and group.grad is not None:
+                    parameters.append(group)
 
-        if self.train_config.max_grad_norm is not None and self.train_config.max_grad_norm > 0 and len(parameters) > 0:
-            self.accelerator.clip_grad_norm_(parameters, self.train_config.max_grad_norm)
+            if self.train_config.max_grad_norm is not None and self.train_config.max_grad_norm > 0 and len(parameters) > 0:
+                self.accelerator.clip_grad_norm_(parameters, self.train_config.max_grad_norm)
 
-        self.optimizer.step()
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
+            self.optimizer.step()
+            self.lr_scheduler.step()
+            self.optimizer.zero_grad()
 
         if processed_batches == 0:
             loss_dict['loss'] = 0.0

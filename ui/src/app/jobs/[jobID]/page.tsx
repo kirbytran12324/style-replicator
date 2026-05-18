@@ -6,11 +6,12 @@ import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
 import useJobLog from '@/hooks/useJobLog'; // Import the log hook
-import SampleImages, { SampleImagesMenu } from '@/components/SampleImages';
+import SampleImages from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
+import JobMetrics, { JobMetricsMenu } from '@/components/JobMetrics';
 import { Job } from '@/utils/types';
 
 export const dynamic = 'force-static';
@@ -53,7 +54,7 @@ const JobLogs = ({ job }: { job: Job }) => {
 };
 
 // --- Updated Pages Configuration ---
-type PageKey = 'overview' | 'samples' | 'logs' | 'config';
+type PageKey = 'overview' | 'samples' | 'logs' | 'metrics' | 'config';
 
 interface Page {
   name: string;
@@ -74,7 +75,13 @@ const pages: Page[] = [
     name: 'Samples',
     value: 'samples',
     component: SampleImages,
-    menuItem: SampleImagesMenu,
+    mainCss: 'pt-24',
+  },
+  {
+    name: 'Metrics',
+    value: 'metrics',
+    component: JobMetrics,
+    menuItem: JobMetricsMenu,
     mainCss: 'pt-24',
   },
   {
@@ -91,8 +98,8 @@ const pages: Page[] = [
   },
 ];
 
-export default function JobPage({ params }: { params: { jobID: string } }) {
-  const usableParams = use(params as any) as { jobID: string };
+export default function JobPage({ params }: { params: Promise<{ jobID: string }> }) {
+  const usableParams = use(params);
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');

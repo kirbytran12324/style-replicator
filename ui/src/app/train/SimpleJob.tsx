@@ -14,7 +14,7 @@ import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
-import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
+import AddSingleImageModal from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
@@ -32,8 +32,6 @@ type Props = {
   datasetOptions: any;
 };
 
-const isDev = process.env.NODE_ENV === 'development';
-
 export default function SimpleJob({
   jobConfig,
   setJobConfigAction,
@@ -45,13 +43,17 @@ export default function SimpleJob({
   gpuList,
   datasetOptions,
 }: Props) {
+  const process0 = jobConfig.config.process[0];
+  const modelArchName = process0.model.arch;
+  const jobTypeValue = process0.type;
+
   const modelArch = useMemo(() => {
-    return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
-  }, [jobConfig.config.process[0].model.arch]);
+    return modelArchs.find(a => a.name === modelArchName) as ModelArch;
+  }, [modelArchName]);
 
   const jobType = useMemo(() => {
-    return jobTypeOptions.find(j => j.value === jobConfig.config.process[0].type);
-  }, [jobConfig.config.process[0].type]);
+    return jobTypeOptions.find(j => j.value === jobTypeValue);
+  }, [jobTypeValue]);
 
   const disableSections = useMemo(() => {
     let sections: string[] = [];
@@ -108,7 +110,7 @@ export default function SimpleJob({
     if (!hasARA) {
       return quantizationOptions;
     }
-    let newQuantizationOptions = [
+    const newQuantizationOptions = [
       {
         label: 'Standard',
         options: [quantizationOptions[0], quantizationOptions[1]],
@@ -116,7 +118,7 @@ export default function SimpleJob({
     ];
 
     // add ARAs if they exist for the model
-    let ARAs: SelectOption[] = [];
+    const ARAs: SelectOption[] = [];
     if (modelArch.accuracyRecoveryAdapters) {
       for (const [label, value] of Object.entries(modelArch.accuracyRecoveryAdapters)) {
         ARAs.push({ value, label });
@@ -129,7 +131,7 @@ export default function SimpleJob({
       });
     }
 
-    let additionalQuantizationOptions: SelectOption[] = [];
+    const additionalQuantizationOptions: SelectOption[] = [];
     // add the quantization options if they are not already included
     for (let i = 2; i < quantizationOptions.length; i++) {
       const option = quantizationOptions[i];
@@ -804,6 +806,16 @@ export default function SimpleJob({
                         onChange={value => setJobConfigAction(value, `config.process[0].datasets[${i}].default_caption`)}
                         placeholder="eg. A photo of a cat"
                       />
+                      <SelectInput
+                        label="Caption Format"
+                        className="pt-2"
+                        value={dataset.caption_ext || 'txt'}
+                        onChange={value => setJobConfigAction(value, `config.process[0].datasets[${i}].caption_ext`)}
+                        options={[
+                          { value: 'txt', label: 'Text (.txt)' },
+                          { value: 'json', label: 'JSON (.json)' },
+                        ]}
+                      />
                       <NumberInput
                         label="Caption Dropout Rate"
                         className="pt-2"
@@ -883,7 +895,7 @@ export default function SimpleJob({
                                   key={res}
                                   label={res.toString()}
                                   checked={dataset.resolution.includes(res)}
-                                  onChange={value => {
+                                  onChange={() => {
                                     const resolutions = dataset.resolution.includes(res)
                                       ? dataset.resolution.filter(r => r !== res)
                                       : [...dataset.resolution, res];
@@ -903,10 +915,8 @@ export default function SimpleJob({
                 type="button"
                 onClick={() => {
                   const newDataset = objectCopy(defaultDatasetConfig);
-                  // automaticallt add the controls for a new dataset
-                  const controls = modelArch?.controls ?? [];
-                  newDataset.controls = controls;
-                  setJobConfigAction([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
+                  newDataset.controls = modelArch?.controls ?? [];
+                   setJobConfigAction([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >
@@ -1093,7 +1103,7 @@ export default function SimpleJob({
                               value = value.replace(/\D/g, '');
                               if (value === '') {
                                 // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
+                                const newConfig = objectCopy(jobConfig);
                                 if (newConfig.config.process[0].sample.samples[i]) {
                                   delete newConfig.config.process[0].sample.samples[i].width;
                                   setJobConfigAction(
@@ -1120,7 +1130,7 @@ export default function SimpleJob({
                               value = value.replace(/\D/g, '');
                               if (value === '') {
                                 // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
+                                const newConfig = objectCopy(jobConfig);
                                 if (newConfig.config.process[0].sample.samples[i]) {
                                   delete newConfig.config.process[0].sample.samples[i].height;
                                   setJobConfigAction(
@@ -1147,7 +1157,7 @@ export default function SimpleJob({
                               value = value.replace(/\D/g, '');
                               if (value === '') {
                                 // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
+                                const newConfig = objectCopy(jobConfig);
                                 if (newConfig.config.process[0].sample.samples[i]) {
                                   delete newConfig.config.process[0].sample.samples[i].seed;
                                   setJobConfigAction(
@@ -1174,7 +1184,7 @@ export default function SimpleJob({
                               value = value.replace(/[^0-9.-]/g, '');
                               if (value === '') {
                                 // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
+                                const newConfig = objectCopy(jobConfig);
                                 if (newConfig.config.process[0].sample.samples[i]) {
                                   delete newConfig.config.process[0].sample.samples[i].network_multiplier;
                                   setJobConfigAction(
@@ -1203,7 +1213,7 @@ export default function SimpleJob({
                                 src={sample[ctrlKey as keyof typeof sample] as string}
                                 onNewImageSelected={imagePath => {
                                   if (!imagePath) {
-                                    let newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
+                                    const newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
                                     delete newSamples[i][ctrlKey as keyof typeof sample];
                                     setJobConfigAction(newSamples, 'config.process[0].sample.samples');
                                   } else {
@@ -1221,7 +1231,7 @@ export default function SimpleJob({
                           src={sample.ctrl_img}
                           onNewImageSelected={imagePath => {
                             if (!imagePath) {
-                              let newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
+                              const newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
                               delete newSamples[i].ctrl_img;
                               setJobConfigAction(newSamples, 'config.process[0].sample.samples');
                             } else {

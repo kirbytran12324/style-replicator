@@ -2676,13 +2676,17 @@ class StableDiffusion:
             return pe
 
         elif self.is_flux2_klein:
-            # normalize: the unconditional prompt comes in as False/None — convert to ""
-            raw_prompt = prompt[0] if isinstance(prompt, list) else prompt
-            if not isinstance(raw_prompt, str):
-                raw_prompt = ""
+            # Keep batched prompts batched. short_and_long_captions doubles the
+            # latent batch and passes long + short prompts together.
+            normalized_prompts = [
+                p if isinstance(p, str) else ""
+                for p in prompt
+            ]
+            prompt_arg = normalized_prompts[0] if len(normalized_prompts) == 1 else normalized_prompts
             # encode_prompt returns (prompt_embeds, text_ids) — no pooled embeds for Klein
             prompt_embeds, text_ids = self.pipeline.encode_prompt(
-                prompt=raw_prompt,
+                prompt=prompt_arg,
+                device=self.device_torch,
             )
             pe = PromptEmbeds(prompt_embeds)
             # stash text_ids and raw prompt in case generate_images or predict_noise needs them

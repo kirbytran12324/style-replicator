@@ -18,6 +18,9 @@ import traceback
 import uuid
 import json
 import hashlib
+import csv
+import zipfile
+from collections import deque
 
 import oyaml as yaml
 from pathlib import Path
@@ -39,7 +42,7 @@ import modal
 from modal import asgi_app
 
 # FastAPI imports
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Body, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 # from fastapi.security import OAuth2PasswordBearer # Removed
 from fastapi.responses import FileResponse
@@ -64,7 +67,7 @@ if not logger.handlers:
     ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(ch)
 
-ALLOWED_SERVE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".txt", ".json", ".mp4"}
+ALLOWED_SERVE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".txt", ".json", ".mp4", ".html", ".zip"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB cap per file
 _filename_sanitize_re = re.compile(r"[^A-Za-z0-9._-]")
 
@@ -73,6 +76,21 @@ def _split_env_list(value: Optional[str]) -> List[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _get_otel_env_summary() -> dict:
+    return {
+        "endpoint": os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        "metrics_endpoint": os.environ.get("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
+        "headers": "set" if (
+            os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+            or os.environ.get("OTEL_EXPORTER_OTLP_METRICS_HEADERS")
+        ) else "missing",
+        "protocol": os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL"),
+        "metrics_temporality": os.environ.get("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"),
+        "dashboard_url": os.environ.get("OTEL_DASHBOARD_URL"),
+        "service_name": os.environ.get("OTEL_SERVICE_NAME"),
+    }
 
 
 def safe_filename(name: str, max_len: int = 200) -> str:
@@ -143,11 +161,12 @@ image = (
     .run_commands(
         "echo '=== Installing application packages (wheelhouse-first; PyPI fallback) ==='",
         "python -m pip install --prefer-binary --find-links /root/wheels --constraint /root/constraints.txt "
-        "transformers python-dotenv accelerate ftfy safetensors albumentations lycoris-lora timm einops "
+        "transformers==4.55.0 python-dotenv accelerate ftfy safetensors albumentations lycoris-lora timm einops "
         "opencv-python-headless huggingface_hub peft lpips hf_transfer flatten_json pyyaml oyaml tensorboard "
         "toml albucore pydantic omegaconf k-diffusion controlnet_aux optimum-quanto python-slugify open_clip_torch "
         "bitsandbytes pytorch_fid sentencepiece pytorch-wavelets matplotlib diffusers fastapi[standard] "
-        "python-multipart modal || true"
+        "python-multipart modal psutil plotly opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp "
+        "opentelemetry-semantic-conventions || true"
     )
     .run_commands(
         "pip install git+https://github.com/huggingface/diffusers.git",
@@ -156,11 +175,18 @@ image = (
         "HUGGINGFACE_HUB_TOKEN": os.environ.get("HF_TOKEN", ""),
         "CUDA_VISIBLE_DEVICES": "0",
         "PYTHONUNBUFFERED": "1",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+        "OTEL_EXPORTER_OTLP_PROTOCOL": os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+        "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": os.environ.get(
+            "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+            "delta",
+        ),
+        "AI_TOOLKIT_ENABLE_CUSTOM_OTEL_EXPORT": os.environ.get("AI_TOOLKIT_ENABLE_CUSTOM_OTEL_EXPORT", "false"),
     })
     .add_local_dir(
         LOCAL_AITOOLKIT_PATH,
         remote_path="/root/ai-toolkit",
-        ignore=["**/.idea/**", "**/__pycache__/**", "**/*.pyc", ".venv/**", "web-ui/**", "ui/**"],
+        ignore=[".git/**", "**/.idea/**", "**/__pycache__/**", "**/*.pyc", ".venv/**", "web-ui/**", "ui/**"],
     )
 )
 
@@ -168,6 +194,12 @@ image = (
 web_image = (
     modal.Image.debian_slim(python_version="3.12")
     .add_local_dir(LOCAL_WHEELHOUSE_PATH, remote_path="/root/wheels", copy=True)
+    .add_local_dir(
+        LOCAL_AITOOLKIT_PATH / "toolkit",
+        remote_path="/root/toolkit",
+        ignore=["**/__pycache__/**", "**/*.pyc"],
+        copy=True,
+    )
     .apt_install("ca-certificates", "git", "curl", "wget")
     .run_commands(
         "echo '=== Ensure pip + build tools for web image ==='",
@@ -175,7 +207,8 @@ web_image = (
     )
     .run_commands(
         "echo '=== Install web dependencies (wheelhouse-first) ==='",
-        "python -m pip install --prefer-binary --find-links /root/wheels fastapi[standard] modal python-dotenv oyaml python-multipart || true"
+        "python -m pip install --prefer-binary --find-links /root/wheels "
+        "fastapi[standard] modal python-dotenv oyaml python-multipart matplotlib plotly || true"
     )
 )
 
@@ -184,13 +217,16 @@ app = modal.App(
     name="flex-lora-training",
     image=image,
     volumes={MOUNT_DIR: modal.Volume.from_name("flux-lora-models", create_if_missing=True),
-             CACHE_DIR: modal.Volume.from_name("hf-cache", create_if_missing=True)}
+             CACHE_DIR: modal.Volume.from_name("hf-cache", create_if_missing=True)},
 )
+APP_NAME = app.name
 
 # Volumes & persistent stores
 model_volume = modal.Volume.from_name("flux-lora-models", create_if_missing=True)
 hf_volume = modal.Volume.from_name("hf-cache", create_if_missing=True)
 job_store = modal.Dict.from_name("user-job-store", create_if_missing=True)
+NEW_RELIC_OTLP_SECRET_NAME = os.environ.get("NEW_RELIC_OTLP_SECRET_NAME", "newrelic-otlp")
+new_relic_otlp_secret = modal.Secret.from_name(NEW_RELIC_OTLP_SECRET_NAME)
 
 
 # ------------------------------------------------------------
@@ -234,6 +270,8 @@ class DatasetDeleteRequest(BaseModel):
 class CaptionRequest(BaseModel):
     path: str
     caption: str
+    caption_short: Optional[str] = None
+    caption_ext: Optional[str] = None
 
 
 class ProgressPayload(BaseModel):
@@ -377,6 +415,132 @@ def get_user_training_path(user_id: str) -> Path:
     return path
 
 
+def _get_job_training_dir(job_record: dict, user_id: str) -> Path:
+    training_folder = job_record.get("training_folder")
+    if training_folder:
+        return Path(training_folder)
+    folder_name = job_record.get("config_name") or job_record.get("job_id")
+    return get_user_training_path(user_id) / folder_name
+
+
+def _resolve_metrics_dir(job_record: dict, user_id: str) -> Path:
+    training_dir = _get_job_training_dir(job_record, user_id)
+    if (training_dir / "metrics.jsonl").exists() or (training_dir / "metrics.csv").exists():
+        return training_dir
+    if (training_dir / "reports").exists():
+        return training_dir
+
+    try:
+        for child in training_dir.iterdir():
+            if not child.is_dir() or child.name.startswith("_"):
+                continue
+            if (child / "metrics.jsonl").exists() or (child / "metrics.csv").exists():
+                return child
+            if (child / "reports").exists():
+                return child
+    except FileNotFoundError:
+        pass
+
+    return training_dir
+
+
+def _load_metrics_jsonl(metrics_jsonl: Path, limit: int) -> List[dict]:
+    records: deque[dict] = deque(maxlen=limit)
+    with open(metrics_jsonl, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                records.append(rec)
+    return list(records)
+
+
+def _load_metrics_csv(metrics_csv: Path, limit: int) -> List[dict]:
+    records: deque[dict] = deque(maxlen=limit)
+    with open(metrics_csv, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            records.append(dict(row))
+    return list(records)
+
+
+def _load_metrics_records(metrics_dir: Path, limit: int) -> List[dict]:
+    metrics_jsonl = metrics_dir / "metrics.jsonl"
+    metrics_csv = metrics_dir / "metrics.csv"
+    if metrics_jsonl.exists():
+        return _load_metrics_jsonl(metrics_jsonl, limit)
+    if metrics_csv.exists():
+        return _load_metrics_csv(metrics_csv, limit)
+    return []
+
+
+def _extract_logging_config(config_path: Path) -> dict:
+    if not config_path.exists():
+        return {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            cfg = yaml.safe_load(handle)
+    except Exception:
+        return {}
+
+    try:
+        logging_cfg = cfg["config"]["process"][0].get("logging") or {}
+    except (KeyError, IndexError, TypeError, AttributeError):
+        logging_cfg = {}
+
+    return {
+        "use_otel": bool(logging_cfg.get("use_otel", True)),
+        "otel_service_name": logging_cfg.get("otel_service_name"),
+        "otel_exporter_endpoint": logging_cfg.get("otel_exporter_endpoint"),
+        "otel_exporter_headers": logging_cfg.get("otel_exporter_headers"),
+        "otel_dashboard_url": logging_cfg.get("otel_dashboard_url"),
+        "track_resources": logging_cfg.get("track_resources", True),
+        "log_every": logging_cfg.get("log_every"),
+        "resource_log_every": logging_cfg.get("resource_log_every"),
+        "resource_log_seconds": logging_cfg.get("resource_log_seconds"),
+        "write_metrics_csv": logging_cfg.get("write_metrics_csv", True),
+        "write_metrics_jsonl": logging_cfg.get("write_metrics_jsonl", True),
+    }
+
+
+def _get_latest_report_dir(metrics_dir: Path) -> Optional[Path]:
+    reports_root = metrics_dir / "reports"
+    if not reports_root.exists():
+        return None
+    dirs = [d for d in reports_root.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    if not dirs:
+        return None
+    dirs.sort(key=lambda p: p.name)
+    return dirs[-1]
+
+
+def _load_otel_metadata(metrics_dir: Path) -> dict:
+    otel_path = metrics_dir / "otel_run.json"
+    if not otel_path.exists():
+        return {}
+    try:
+        with open(otel_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _relativize_paths(paths: List[Path]) -> List[str]:
+    rel_paths = []
+    for path in paths:
+        try:
+            rel_paths.append(str(path.relative_to(Path(MOUNT_DIR))))
+        except Exception:
+            continue
+    return rel_paths
+
+
 # ------------------------------------------------------------
 # Helpers: dataset paths
 # ------------------------------------------------------------
@@ -515,7 +679,7 @@ async def resume_job_endpoint(job_id: str, user_id: str = Depends(get_current_us
     new_job_id = str(uuid.uuid4())
 
     # Spawn a new training call with recover=True
-    train_func = modal.Function.from_name("flex-lora-training", "main")
+    train_func = modal.Function.from_name(APP_NAME, "main")
     try:
         call = train_func.spawn(
             config_file_list_str=str(config_path),
@@ -535,6 +699,7 @@ async def resume_job_endpoint(job_id: str, user_id: str = Depends(get_current_us
         "user_id": user_id,
         "status": "started",
         "config_name": config_name,
+        "training_folder": str(get_user_training_path(user_id) / safe_filename(config_name)),
         "created_at": iso_now(),
         "result": None,
         "error": None,
@@ -631,6 +796,10 @@ async def get_file(file_path: str, request: Request, user_id: str = Depends(get_
         media_type = "application/json"
     elif ext == ".mp4":
         media_type = "video/mp4"
+    elif ext == ".html":
+        media_type = "text/html"
+    elif ext == ".zip":
+        media_type = "application/zip"
 
     return FileResponse(raw_path, media_type=media_type)
 
@@ -645,8 +814,8 @@ async def get_job_log(job_id: str, user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=404, detail="Job not found")
     if job.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    folder_name = job.get("config_name", job_id)
-    log_path = get_user_training_path(user_id) / folder_name / "log.txt"
+    training_dir = _get_job_training_dir(job, user_id)
+    log_path = training_dir / "log.txt"
     try:
         model_volume.reload()
     except Exception as e:
@@ -663,8 +832,8 @@ async def get_job_samples(job_id: str, user_id: str = Depends(get_current_user_i
         raise HTTPException(status_code=404, detail="Job not found")
     if job.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    folder_name = job.get("config_name", job_id)
-    samples_dir = get_user_training_path(user_id) / folder_name / "samples"
+    training_dir = _get_job_training_dir(job, user_id)
+    samples_dir = training_dir / "samples"
     if not samples_dir.exists():
         return {"samples": []}
     paths = []
@@ -673,6 +842,142 @@ async def get_job_samples(job_id: str, user_id: str = Depends(get_current_user_i
             rel_path = f.relative_to(Path(MOUNT_DIR))
             paths.append(str(rel_path))
     return {"samples": sorted(paths)}
+
+
+# ------------------------------------------------------------
+# Metrics & reports
+# ------------------------------------------------------------
+@api.get("/api/jobs/{job_id}/metrics")
+async def get_job_metrics(
+    job_id: str,
+    limit: int = Query(1000, ge=1, le=10000),
+    user_id: str = Depends(get_current_user_id),
+):
+    job = _get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        model_volume.reload()
+    except Exception as e:
+        logger.debug("model_volume.reload() failed before reading metrics: %s", e)
+
+    metrics_dir = _resolve_metrics_dir(job, user_id)
+    records = _load_metrics_records(metrics_dir, limit)
+    fields = sorted({
+        key
+        for rec in records
+        for key in rec.keys()
+        if key not in {"timestamp", "job_id", "step"}
+    })
+
+    config_name = job.get("config_name") or job_id
+    config_path = get_user_training_path(user_id) / "_configs" / f"{safe_filename(config_name)}.yaml"
+    logging_cfg = _extract_logging_config(config_path)
+    otel_meta = _load_otel_metadata(metrics_dir)
+
+    return {
+        "has_metrics": bool(records),
+        "records": records,
+        "fields": fields,
+        "logging": logging_cfg,
+        "otel": otel_meta,
+    }
+
+
+@api.get("/api/jobs/{job_id}/reports")
+async def get_job_reports(job_id: str, user_id: str = Depends(get_current_user_id)):
+    job = _get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        model_volume.reload()
+    except Exception as e:
+        logger.debug("model_volume.reload() failed before reading reports: %s", e)
+
+    metrics_dir = _resolve_metrics_dir(job, user_id)
+    latest_dir = _get_latest_report_dir(metrics_dir)
+    if not latest_dir:
+        return {"reports": {"html": [], "png": []}, "latest_dir": None}
+
+    html_paths = _relativize_paths(sorted(latest_dir.glob("*.html")))
+    png_paths = _relativize_paths(sorted(latest_dir.glob("*.png")))
+    return {
+        "reports": {"html": html_paths, "png": png_paths},
+        "latest_dir": str(latest_dir.relative_to(Path(MOUNT_DIR))),
+    }
+
+
+@api.post("/api/jobs/{job_id}/reports/generate")
+async def generate_job_reports(job_id: str, user_id: str = Depends(get_current_user_id)):
+    job = _get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        from toolkit.report_generator import generate_reports
+    except ModuleNotFoundError as e:
+        logger.exception("Report generator is unavailable in the API image")
+        raise HTTPException(status_code=500, detail="Report generator is unavailable") from e
+
+    metrics_dir = _resolve_metrics_dir(job, user_id)
+    report_paths = generate_reports(str(metrics_dir))
+    safe_commit(model_volume)
+
+    html_paths = _relativize_paths([Path(p) for p in report_paths.get("html", [])])
+    png_paths = _relativize_paths([Path(p) for p in report_paths.get("png", [])])
+    return {
+        "reports": {"html": html_paths, "png": png_paths},
+    }
+
+
+@api.post("/api/jobs/{job_id}/reports/zip")
+async def zip_job_reports(
+    job_id: str,
+    format: str = Query("all", pattern="^(all|png|html)$"),
+    user_id: str = Depends(get_current_user_id),
+):
+    job = _get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    metrics_dir = _resolve_metrics_dir(job, user_id)
+    latest_dir = _get_latest_report_dir(metrics_dir)
+    if not latest_dir:
+        raise HTTPException(status_code=404, detail="No reports found")
+
+    if format == "png":
+        files = list(latest_dir.glob("*.png"))
+    elif format == "html":
+        files = list(latest_dir.glob("*.html"))
+    else:
+        files = list(latest_dir.glob("*.png")) + list(latest_dir.glob("*.html"))
+
+    if not files:
+        raise HTTPException(status_code=404, detail="No report files found for this format")
+
+    export_dir = latest_dir.parent / "_exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    zip_name = f"reports_{latest_dir.name}_{format}.zip"
+    zip_path = export_dir / zip_name
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_handle:
+        for file_path in files:
+            arcname = f"{latest_dir.name}/{file_path.name}"
+            zip_handle.write(file_path, arcname=arcname)
+
+    safe_commit(model_volume)
+    rel_path = str(zip_path.relative_to(Path(MOUNT_DIR)))
+    return {"zip_path": rel_path}
 
 
 # ------------------------------------------------------------
@@ -736,7 +1041,7 @@ async def delete_dataset(req: DatasetDeleteRequest, user_id: str = Depends(get_c
 
 @api.post("/api/datasets/upload")
 async def upload_dataset_files(
-        name: str = Body(...),
+        name: str = Form(...),
         files: List[UploadFile] = File(...),
         user_id: str = Depends(get_current_user_id)
 ):
@@ -760,7 +1065,7 @@ async def upload_dataset_files(
         return size
 
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4"}
-    caption_ext = ".txt"
+    caption_exts = {".txt", ".json"}
     staged_pairs: dict[str, dict[str, Path]] = {}
 
     for upload in files:
@@ -781,7 +1086,7 @@ async def upload_dataset_files(
         stats["written"].append(str(dest.relative_to(Path(MOUNT_DIR))))
         if ext in image_exts:
             staged_pairs[dest.stem.lower()]["image"] = dest
-        elif ext == caption_ext:
+        elif ext in caption_exts:
             staged_pairs[dest.stem.lower()]["caption"] = dest
 
     for pair in staged_pairs.values():
@@ -789,7 +1094,7 @@ async def upload_dataset_files(
         cap = pair.get("caption")
         if not img or not cap:
             continue
-        expected_caption_path = img.with_suffix(caption_ext)
+        expected_caption_path = img.with_suffix(cap.suffix.lower())
         if cap != expected_caption_path:
             shutil.move(cap, expected_caption_path)
             stats["paired"].append({
@@ -846,7 +1151,7 @@ async def start_training(request: TrainRequest, user_id: str = Depends(get_curre
             logger.warning("Could not extract base_model path from config, skipping pre-cache.")
         # ------------------------------------------
 
-        train_func = modal.Function.from_name("flex-lora-training", "main")
+        train_func = modal.Function.from_name(APP_NAME, "main")
         proposed_name = request.name or str(uuid.uuid4())
         job_name = safe_filename(proposed_name) or str(uuid.uuid4())
         user_train_root = f"{MOUNT_DIR}/trainings/{user_id}"
@@ -855,6 +1160,7 @@ async def start_training(request: TrainRequest, user_id: str = Depends(get_curre
 
         try:
             cfg["config"]["process"][0]["training_folder"] = job_training_folder
+            cfg["config"]["training_folder"] = job_training_folder
             cfg["config"]["name"] = job_name
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid config shape: {e}")
@@ -892,6 +1198,7 @@ async def start_training(request: TrainRequest, user_id: str = Depends(get_curre
             "user_id": user_id,
             "status": "started",
             "config_name": job_name,
+            "training_folder": job_training_folder,
             "created_at": iso_now(),
             "result": None,
             "error": None,
@@ -966,7 +1273,7 @@ async def generate(request: GenerateRequest, user_id: str = Depends(get_current_
         out_dir = f"{MOUNT_DIR}/generated/{user_id}/{job_stub}"
         os.makedirs(out_dir, exist_ok=True)
 
-        remote_generate_func = modal.Function.from_name("flex-lora-training", "remote_generate")
+        remote_generate_func = modal.Function.from_name(APP_NAME, "remote_generate")
 
         base_seed = request.seed
         if base_seed is None:
@@ -1046,12 +1353,31 @@ async def get_caption(
     if not str(img_path).startswith(str(Path(MOUNT_DIR).resolve())):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    json_path = img_path.with_suffix(".json")
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            logger.warning("Invalid JSON caption file %s: %s", json_path, e)
+            raise HTTPException(status_code=400, detail="Invalid JSON caption file")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="JSON caption file must contain an object")
+        return {
+            "caption": data.get("caption", "") or "",
+            "caption_short": data.get("caption_short", "") or "",
+            "caption_ext": "json",
+        }
+
     txt_path = img_path.with_suffix(".txt")
     if txt_path.exists():
-        return {"caption": txt_path.read_text(encoding="utf-8")}
+        return {
+            "caption": txt_path.read_text(encoding="utf-8"),
+            "caption_short": "",
+            "caption_ext": "txt",
+        }
 
     # Always 200 with empty caption so the UI just treats it as "no caption yet"
-    return {"caption": ""}
+    return {"caption": "", "caption_short": "", "caption_ext": "txt"}
 
 
 @api.post("/api/files/caption")
@@ -1066,19 +1392,39 @@ async def save_caption(req: CaptionRequest, user_id: str = Depends(get_current_u
     if not str(img_path).startswith(str(resolved_mount_root)):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    txt_path = img_path.with_suffix(".txt")
+    caption_ext = (req.caption_ext or "txt").lower().lstrip(".")
+    if caption_ext not in {"txt", "json"}:
+        raise HTTPException(status_code=400, detail="Unsupported caption extension")
+
+    caption_path = img_path.with_suffix(f".{caption_ext}")
 
     try:
-        rel = txt_path.relative_to(resolved_mount_root)
+        rel = caption_path.relative_to(resolved_mount_root)
     except ValueError:
-        logger.warning("Caption save outside mount root rejected: %s", txt_path)
+        logger.warning("Caption save outside mount root rejected: %s", caption_path)
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Simple user check: require the per-user folder segment
     if f"/{user_id}/" not in f"/{rel.as_posix()}/":
         raise HTTPException(status_code=403, detail="Access denied")
 
-    txt_path.write_text(req.caption, encoding="utf-8")
+    if caption_ext == "json":
+        data = {}
+        if caption_path.exists():
+            try:
+                existing = json.loads(caption_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                logger.warning("Invalid JSON caption file %s: %s", caption_path, e)
+                raise HTTPException(status_code=400, detail="Invalid JSON caption file")
+            if not isinstance(existing, dict):
+                raise HTTPException(status_code=400, detail="JSON caption file must contain an object")
+            data = existing
+        data["caption"] = req.caption
+        data["caption_short"] = req.caption_short or ""
+        caption_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        caption_path.write_text(req.caption, encoding="utf-8")
+
     safe_commit(model_volume)
     return {"status": "saved"}
 
@@ -1118,6 +1464,67 @@ async def delete_file(path: str, user_id: str = Depends(get_current_user_id)):
 @asgi_app()
 def api_app():
     return api
+
+
+@app.function(
+    image=image,
+    timeout=900,
+    volumes={MOUNT_DIR: model_volume, CACHE_DIR: hf_volume},
+)
+def preflight_imports(require_flux2_klein: bool = True) -> str:
+    """
+    Import the same training modules used by a real job so dependency/image
+    issues fail before launching GPU work.
+    """
+    import importlib
+    import json as json_lib
+    import sys
+
+    if "/root/ai-toolkit" not in sys.path:
+        sys.path.insert(0, "/root/ai-toolkit")
+
+    results = {}
+
+    transformers = importlib.import_module("transformers")
+    results["transformers_version"] = getattr(transformers, "__version__", "unknown")
+    required_transformers = [
+        "ViTHybridImageProcessor",
+        "ViTHybridForImageClassification",
+        "Qwen3ForCausalLM",
+        "Qwen2TokenizerFast",
+    ]
+    results["transformers_symbols"] = {
+        name: hasattr(transformers, name)
+        for name in required_transformers
+    }
+
+    diffusers = importlib.import_module("diffusers")
+    results["diffusers_version"] = getattr(diffusers, "__version__", "unknown")
+    results["has_flux2_klein_pipeline"] = hasattr(diffusers, "Flux2KleinPipeline")
+
+    importlib.import_module("toolkit.dataloader_mixins")
+    importlib.import_module("toolkit.data_loader")
+    importlib.import_module("toolkit.custom_adapter")
+    importlib.import_module("toolkit.ip_adapter")
+    importlib.import_module("toolkit.reference_adapter")
+    importlib.import_module("toolkit.stable_diffusion_model")
+    importlib.import_module("jobs.process.BaseSDTrainProcess")
+    importlib.import_module("jobs")
+    importlib.import_module("toolkit.job")
+
+    missing = [
+        f"transformers.{name}"
+        for name, present in results["transformers_symbols"].items()
+        if not present
+    ]
+    if require_flux2_klein and not results["has_flux2_klein_pipeline"]:
+        missing.append("diffusers.Flux2KleinPipeline")
+
+    if missing:
+        raise RuntimeError(f"Preflight missing required symbols: {missing}; versions={results}")
+
+    results["status"] = "ok"
+    return json_lib.dumps(results, indent=2, sort_keys=True)
 
 
 @app.function(volumes={MOUNT_DIR: model_volume})
@@ -1171,6 +1578,7 @@ def volume_cleanup_task(paths: List[str]) -> int:
     timeout=28800,
     image=image,
     volumes={MOUNT_DIR: model_volume, CACHE_DIR: hf_volume},
+    secrets=[new_relic_otlp_secret],
 )
 def main(
         config_file_list_str: str,
@@ -1204,6 +1612,8 @@ def main(
         force=True,
     )
     setup_logger = logging.getLogger("setup")
+
+    setup_logger.info("OpenTelemetry env: %s", _get_otel_env_summary())
 
     config_file = config_file_list_str.split(",")[0]
     cfg_path = Path(config_file)
@@ -1243,6 +1653,49 @@ def main(
     except Exception as e:
         setup_logger.warning(f"Unable to parse training folder from config: {e}")
         training_folder = train_root
+
+    config_user_id = None
+    try:
+        cfg_path_parts = cfg_path.resolve().parts
+        mount_parts = Path(MOUNT_DIR).resolve().parts
+        if len(cfg_path_parts) >= len(mount_parts) + 3:
+            # Expect: {MOUNT_DIR}/trainings/<user_id>/_configs/<job_name>.yaml
+            if cfg_path_parts[:len(mount_parts) + 1] == (*mount_parts, "trainings"):
+                config_user_id = cfg_path_parts[len(mount_parts) + 1]
+    except Exception as e:
+        setup_logger.debug("Unable to resolve config user id: %s", e)
+
+    if config_user_id:
+        expected_training_folder = Path(MOUNT_DIR) / "trainings" / config_user_id / job_name
+        needs_rewrite = False
+        cfg_training_folder = cfg.get("config", {}).get("training_folder")
+        if not cfg_training_folder:
+            needs_rewrite = True
+        else:
+            try:
+                cfg_training_folder_resolved = Path(cfg_training_folder).resolve()
+                if not str(cfg_training_folder_resolved).startswith(str(Path(MOUNT_DIR).resolve())):
+                    needs_rewrite = True
+            except Exception:
+                needs_rewrite = True
+
+        if needs_rewrite:
+            setup_logger.warning(
+                "Config training_folder is outside MOUNT_DIR; rewriting to %s",
+                expected_training_folder,
+            )
+            cfg.setdefault("config", {})["training_folder"] = str(expected_training_folder)
+            try:
+                cfg.setdefault("config", {}).setdefault("process", [{}])[0]["training_folder"] = str(expected_training_folder)
+            except Exception:
+                pass
+            try:
+                with open(cfg_path, "w", encoding="utf-8") as handle:
+                    yaml.dump(cfg, handle)
+                safe_commit(model_volume)
+            except Exception as e:
+                setup_logger.warning("Failed to rewrite training_folder in config: %s", e)
+            training_folder = expected_training_folder
 
     training_folder.mkdir(parents=True, exist_ok=True)
     log_file_path = training_folder / "log.txt"
@@ -1416,7 +1869,7 @@ def main(
             print(f"[DEBUG] Progress write error: {e}")
 
     try:
-        job = get_job(config_file, name)
+        job = get_job(config_file, name, job_id=job_id)
         job.set_progress_tracker(ProgressTracker(_publish_progress))
         logger.info(f"Starting job: {job_name}")
         logger.debug("Note: toolkit.print.setup_log_to_file is intentionally unused inside Modal workers because DualOutput already handles log capture.")

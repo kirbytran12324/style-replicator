@@ -6,14 +6,16 @@ import { Button } from '@headlessui/react';
 import { TextInput, NumberInput, SelectInput } from '@/components/formInputs';
 import { TopBar, MainContent } from '@/components/layout';
 import ImageGenerator from '@/components/ImageGenerator';
+import Loading from '@/components/Loading';
 import { Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import useModelList from '@/hooks/useModelList';
-import useSettings from '@/hooks/useSettings'; // Import settings hook
+import useSettings from '@/hooks/useSettings';
+
 export default function GeneratePage() {
   // We assume models is now a list of objects { name: string, base_model: string }
   // based on the previous step's plan.
   const { models, isLoading: modelsLoading } = useModelList();
-  const { models, isLoading: modelsLoading } = useModelList();
+  const { settings } = useSettings();
 
   const [prompt, setPrompt] = useState('');
   const [numSamples, setNumSamples] = useState(1);
@@ -24,7 +26,6 @@ export default function GeneratePage() {
   const [baseModel, setBaseModel] = useState('black-forest-labs/FLUX.1-dev');
 
   const [images, setImages] = useState<string[]>([]);
-  const [resultSeed, setResultSeed] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,7 +54,6 @@ export default function GeneratePage() {
     setLoading(true);
     setError(null);
     setImages([]);
-    setResultSeed(null);
 
     try {
       const res = await apiClient.post('/api/generate', {
@@ -78,7 +78,6 @@ export default function GeneratePage() {
         });
 
         setImages(processedImages);
-        setResultSeed(res.data?.seed ?? null);
       }
     } catch (e: any) {
       console.error(e);
@@ -95,85 +94,92 @@ export default function GeneratePage() {
       </TopBar>
       <MainContent>
         <div className="max-w-4xl mx-auto space-y-8 pb-20">
-          <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6 shadow-lg">
+           <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6 shadow-lg">
 
-            {/* Models Configuration Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Base Model Input */}
-                <div>
-                    <TextInput
-                        label="Base Model (HuggingFace ID)"
-                        value={baseModel}
-                        onChange={setBaseModel}
-                        placeholder="black-forest-labs/FLUX.1-dev"
-                        disabled={loading}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                        If using a LoRA, this will auto-fill with the training model.
-                    </p>
-                </div>
+             {/* Models Configuration Grid */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               {/* Base Model Input */}
+               <div>
+                 <TextInput
+                   label="Base Model (HuggingFace ID)"
+                   value={baseModel}
+                   onChange={setBaseModel}
+                   placeholder="black-forest-labs/FLUX.1-dev"
+                   disabled={loading}
+                 />
+                 <p className="text-xs text-gray-500 mt-1">
+                   If using a LoRA, this will auto-fill with the training model.
+                 </p>
+               </div>
 
-                {/* LoRA Selection */}
-                <div>
-                    <SelectInput
-                        label="Select Trained Model (LoRA)"
-                        value={selectedModel}
-                        onChange={setSelectedModel}
-                        options={modelOptions}
-                        disabled={modelsLoading}
-                        placeholder={modelsLoading ? "Loading models..." : "Select a model"}
-                    />
-                    {modelsLoading && <p className="text-xs text-blue-400 mt-1">Fetching models...</p>}
-              <div className="flex-grow">
-                <TextInput
-                    label="Prompt"
-                    value={prompt}
-                    onChange={setPrompt}
-                    placeholder="A cinematic shot of..."
-                    disabled={loading}
-                />
-              </div>
-              <div className="md:w-32">
-                <NumberInput
-                    label="Count"
-                    value={numSamples}
-                    onChange={(v) => setNumSamples(v || 1)}
-                    min={1}
-                    max={4}
-                    disabled={loading}
-                />
-              </div>
-              <div className="md:w-48">
-                <NumberInput
-                    label="Seed (optional)"
-                    value={seed}
-                    onChange={setSeed}
-                    min={0}
-                    max={2 ** 31 - 1}
-                    placeholder="Random"
-                    disabled={loading}
-                />
-                <p className="text-xs text-gray-500 mt-1">Leave blank for auto-generated.
-                </p>
-              </div>
-            </div>
+               {/* LoRA Selection */}
+               <div>
+                 <SelectInput
+                   label="Select Trained Model (LoRA)"
+                   value={selectedModel}
+                   onChange={setSelectedModel}
+                   options={modelOptions}
+                   disabled={modelsLoading}
+                   placeholder={modelsLoading ? "Loading models..." : "Select a model"}
+                 />
+                 {modelsLoading && <p className="text-xs text-blue-400 mt-1">Fetching models...</p>}
+               </div>
+             </div>
 
-            <div className="flex justify-end pt-2">
-              <Button
-                  onClick={handleGenerate}
-                  disabled={loading || !prompt}
-                  className={`
-                    flex items-center px-6 py-2.5 rounded-lg font-medium transition-all
-                    ${loading || !prompt 
-                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
-                      : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40'}
-                  `}
-              >
-                  {loading ? <Loader2 className="animate-spin mr-2 h-5 w-5" /> : <Sparkles className="mr-2 h-5 w-5" />}
-                  {loading ? 'Dreaming...' : 'Generate'}
-              </Button>
-            </div>
-          </div>
+             {/* Prompt & Generation Settings */}
+             <div className="space-y-4">
+               <div>
+                 <TextInput
+                   label="Prompt"
+                   value={prompt}
+                   onChange={setPrompt}
+                   placeholder="A cinematic shot of..."
+                   disabled={loading}
+                 />
+               </div>
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div>
+                   <NumberInput
+                     label="Count"
+                     value={numSamples}
+                     onChange={(v) => setNumSamples(v || 1)}
+                     min={1}
+                     max={4}
+                     disabled={loading}
+                   />
+                 </div>
+                 <div>
+                   <NumberInput
+                     label="Seed (optional)"
+                     value={seed}
+                     onChange={setSeed}
+                     min={0}
+                     max={2 ** 31 - 1}
+                     placeholder="Random"
+                     disabled={loading}
+                   />
+                   <p className="text-xs text-gray-500 mt-1">Leave blank for auto-generated.</p>
+                 </div>
+               </div>
+             </div>
+
+             <div className="flex justify-end pt-2">
+               <Button
+                 onClick={handleGenerate}
+                 disabled={loading || !prompt}
+                 className={`
+                   flex items-center px-6 py-2.5 rounded-lg font-medium transition-all
+                   ${loading || !prompt 
+                     ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
+                     : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40'}
+                 `}
+               >
+                 {loading ? <Loader2 className="animate-spin mr-2 h-5 w-5" /> : <Sparkles className="mr-2 h-5 w-5" />}
+                 {loading ? 'Dreaming...' : 'Generate'}
+               </Button>
+             </div>
+           </div>
 
           {error && (
             <div className="p-4 bg-red-900/20 border border-red-800/50 rounded-lg flex items-center text-red-200">
@@ -182,27 +188,36 @@ export default function GeneratePage() {
             </div>
           )}
 
-          {images.length > 0 && (
+                    {images.length > 0 && (
             <div className="space-y-2 relative">
               {loading && (
                 <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center z-10 rounded-lg">
-                  <Loading label="Generating" />
+                  <Loading />
                 </div>
-            <div className="space-y-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {images.map((img, i) => (
-                  <ImageGenerator
-                    key={i}
-                    src={img}
-                    alt={`Generated image ${i + 1}`}
-                    index={i}
-                  />
-                ))}
+              )}
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {images.map((img, i) => (
+                    <ImageGenerator
+                      key={i}
+                      src={img}
+                      alt={`Generated image ${i + 1}`}
+                      index={i}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
-          {loading && images.length === 0 && (
-            <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-6 text-center">
-              <Loading label="Generating" />
-              <p className="text-sm text-gray-400 mt-2">This can take up to a minute depending on your model.</p>
+           {loading && images.length === 0 && (
+             <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-6 text-center">
+               <Loading />
+               <p className="text-sm text-gray-400 mt-2">This can take up to a minute depending on your model.</p>
+             </div>
+           )}
+         </div>
+       </MainContent>
+     </>
+   );
+ }

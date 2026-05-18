@@ -1719,6 +1719,7 @@ class LatentCachingMixin:
             # cache all latents to disk
             to_disk = self.is_caching_latents_to_disk
             to_memory = self.is_caching_latents_to_memory
+            batch_size = max(1, int(getattr(self.dataset_config, 'cache_latents_batch_size', 1) or 1))
 
             if to_disk:
                 print_acc(" - Saving latents to disk")
@@ -1726,6 +1727,66 @@ class LatentCachingMixin:
                 print_acc(" - Keeping latents in memory")
             # move sd items to cpu except for vae
             self.sd.set_device_state_preset('cache_latents')
+
+            dtype = self.sd.torch_dtype
+            device = self.sd.device_torch
+            pending_items = []
+            pending_tensors = []
+
+            def encode_single(file_item):
+                file_item.load_and_process_image(self.transform, only_load_latents=True)
+                img = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
+                latent = self.sd.encode_images(img).squeeze(0)
+                return latent
+
+            def flush_pending():
+                nonlocal pending_items, pending_tensors
+                if not pending_items:
+                    return
+                try:
+                    imgs = torch.stack(pending_tensors, dim=0).to(device, dtype=dtype)
+                    latent_batch = self.sd.encode_images(imgs)
+                except Exception:
+                    # fallback to single-item encoding to preserve behavior
+                    for file_item in pending_items:
+                        latent = encode_single(file_item)
+                        if to_disk:
+                            state_dict = OrderedDict([
+                                ('latent', latent.clone().detach().cpu()),
+                            ])
+                            meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
+                            latent_path = file_item.get_latent_path(recalculate=True)
+                            os.makedirs(os.path.dirname(latent_path), exist_ok=True)
+                            save_file(state_dict, latent_path, metadata=meta)
+                        if to_memory:
+                            file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+                        file_item.is_latent_cached = True
+                        del latent
+                        del file_item.tensor
+                    pending_items = []
+                    pending_tensors = []
+                    return
+
+                for file_item, latent in zip(pending_items, latent_batch):
+                    if to_disk:
+                        state_dict = OrderedDict([
+                            ('latent', latent.clone().detach().cpu()),
+                        ])
+                        meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
+                        latent_path = file_item.get_latent_path(recalculate=True)
+                        os.makedirs(os.path.dirname(latent_path), exist_ok=True)
+                        save_file(state_dict, latent_path, metadata=meta)
+
+                    if to_memory:
+                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+
+                    file_item.is_latent_cached = True
+                    del file_item.tensor
+
+                del imgs
+                del latent_batch
+                pending_items = []
+                pending_tensors = []
 
             # use tqdm to show progress
             i = 0
@@ -1756,48 +1817,28 @@ class LatentCachingMixin:
                         # load it into memory
                         state_dict = load_file(latent_path, device='cpu')
                         file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
-                else:
-                    # not saved to disk, calculate
-                    # load the image first
+                    file_item.is_latent_cached = True
+                    i += 1
+                    continue
+
+                try:
                     file_item.load_and_process_image(self.transform, only_load_latents=True)
-                    dtype = self.sd.torch_dtype
-                    device = self.sd.device_torch
-                    # add batch dimension
-                    try:
-                        imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
-                        latent = self.sd.encode_images(imgs).squeeze(0)
-                    except Exception as e:
-                        print_acc(f"Error processing image: {file_item.path}")
-                        print_acc(f"Error: {str(e)}")
-                        raise e
-                    # save_latent
-                    if to_disk:
-                        state_dict = OrderedDict([
-                            ('latent', latent.clone().detach().cpu()),
-                        ])
-                        # metadata
-                        meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
-                        os.makedirs(os.path.dirname(latent_path), exist_ok=True)
-                        save_file(state_dict, latent_path, metadata=meta)
+                    pending_items.append(file_item)
+                    pending_tensors.append(file_item.tensor)
+                    if len(pending_items) >= batch_size:
+                        flush_pending()
+                except Exception as e:
+                    print_acc(f"Error processing image: {file_item.path}")
+                    print_acc(f"Error: {str(e)}")
+                    raise e
 
-                    if to_memory:
-                        # keep it in memory
-                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
-
-                    del imgs
-                    del latent
-                    del file_item.tensor
-
-                    # flush(garbage_collect=False)
                 file_item.is_latent_cached = True
                 i += 1
-                # flush every 100
-                # if i % 100 == 0:
-                #     flush()
+
+            flush_pending()
 
             # restore device state
             self.sd.restore_device_state()
-
 
 class TextEmbeddingFileItemDTOMixin:
     def __init__(self, *args, **kwargs):

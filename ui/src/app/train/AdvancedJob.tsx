@@ -20,8 +20,6 @@ type Props = {
   settings: Settings;
 };
 
-const isDev = process.env.NODE_ENV === 'development';
-
 const yamlConfig: YAML.DocumentOptions &
   YAML.SchemaOptions &
   YAML.ParseOptions &
@@ -34,7 +32,7 @@ const yamlConfig: YAML.DocumentOptions &
   directives: true,
 };
 
-export default function AdvancedJob({ jobConfig, setJobConfigAction, settings }: Props) {
+export default function AdvancedJob({ jobConfig, setJobConfigAction, settings: _settings }: Props) {
   const [editorValue, setEditorValue] = useState<string>('');
   const lastJobConfigUpdateStringRef = useRef('');
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);

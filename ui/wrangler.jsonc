@@ -8,8 +8,6 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  // Add environment variables for production
-  // You can set these in Cloudflare dashboard or via wrangler secret
   "vars": {
     "NEXT_PUBLIC_MODAL_API_URL": "https://kirbytran12324--flex-lora-training-api-app.modal.run"
   }

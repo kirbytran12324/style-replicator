@@ -44,7 +44,10 @@ class BaseTrainProcess(BaseProcess):
         self.writer = None
         self.training_folder = self.get_conf('training_folder',
                                              self.job.training_folder if hasattr(self.job, 'training_folder') else None)
-        self.save_root = os.path.join(self.training_folder, self.name)
+        if self.training_folder and os.path.basename(self.training_folder.rstrip("/\\")) == self.name:
+            self.save_root = self.training_folder
+        else:
+            self.save_root = os.path.join(self.training_folder, self.name)
         self.step = 0
         self.first_step = 0
         self.log_dir = self.get_conf('log_dir', self.job.log_dir if hasattr(self.job, 'log_dir') else None)

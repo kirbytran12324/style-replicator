@@ -5,7 +5,8 @@ from toolkit.config import get_config
 
 def get_job(
         config_path: Union[str, dict, OrderedDict],
-        name=None
+        name=None,
+        job_id: str | None = None,
 ):
     config = get_config(config_path, name)
     if not config['job']:
@@ -17,7 +18,7 @@ def get_job(
         return ExtractJob(config)
     if job == 'train':
         from jobs import TrainJob
-        return TrainJob(config)
+        return TrainJob(config, job_id=job_id)
     if job == 'mod':
         from jobs import ModJob
         return ModJob(config)
@@ -37,8 +38,9 @@ def get_job(
 
 def run_job(
         config: Union[str, dict, OrderedDict],
-        name=None
+        name=None,
+        job_id: str | None = None,
 ):
-    job = get_job(config, name)
+    job = get_job(config, name, job_id=job_id)
     job.run()
     job.cleanup()

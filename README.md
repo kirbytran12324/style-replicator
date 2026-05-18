@@ -163,4 +163,61 @@ But the main purpose of this repository is still to document and support the Mod
 - Config paths may need adjustment depending on whether you are looking at Modal-mounted storage or local files.
 - `run_modal.py` is the best first file to inspect if you want to understand the system end-to-end.
 
+## Training Metrics & Reports
 
+During training, metrics are written to `metrics.csv` and `metrics.jsonl` inside each training folder. Resource snapshots (CPU/GPU) are captured alongside loss and learning-rate values. HTML and PNG reports are generated at the end of training under `reports/`.
+
+Generate reports manually:
+
+```cmd
+python scripts\generate_training_report.py --metrics-dir <training_folder>
+```
+
+## OpenTelemetry Metrics
+
+Modal native OpenTelemetry is the primary New Relic integration for Modal
+function logs and container/platform metrics. Configure it in the Modal
+workspace, not in the training YAML:
+
+- Modal OTEL push URL: `https://otlp.nr-data.net`
+- Modal OpenTelemetry Secret key: `OTEL_HEADER_api-key`
+- Secret value: your New Relic license key
+
+Training loss, learning-rate, and resource snapshots are still written locally
+to `metrics.csv` and `metrics.jsonl`, and reports are generated from those files.
+The `logging.use_otel` setting only controls custom training metric export
+attempts. If no `OTEL_EXPORTER_OTLP_ENDPOINT` is present, custom OTEL export is
+disabled and local metrics continue to work.
+
+Custom training metrics can be exported directly to New Relic from the Modal
+training container. Create a Modal secret named `newrelic-otlp` with:
+
+- `OTEL_EXPORTER_OTLP_HEADERS=api-key=<New Relic ingest license key>`
+- Optional override: `OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net`
+- Optional override: `OTEL_SERVICE_NAME=ai-toolkit`
+
+The secret name can be overridden at deploy time with
+`NEW_RELIC_OTLP_SECRET_NAME`. The training image sets the non-secret defaults
+`OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net`,
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, and
+`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`.
+
+Environment variables honored by the custom training metric logger and report
+generator:
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_HEADERS`
+- `OTEL_EXPORTER_OTLP_METRICS_HEADERS`
+- `OTEL_SERVICE_NAME`
+- `OTEL_DASHBOARD_URL`
+
+The YAML fields `otel_exporter_endpoint` and `otel_exporter_headers` are legacy
+direct-export overrides for local development or non-Modal deployments. For
+Modal, prefer the native workspace integration and Modal-provided collector env
+vars once custom metrics/spans are enabled for the workspace.
+
+Quick smoke test (writes metrics + reports into `test_outputs/otel_smoke/`):
+
+```bat
+python scripts\otel_smoke.py
+```

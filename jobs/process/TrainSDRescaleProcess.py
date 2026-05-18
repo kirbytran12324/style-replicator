@@ -262,9 +262,11 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
         loss = loss_function(denoised_pred, denoised_target)
         loss_float = loss.item()
         loss.backward()
-        self.optimizer.step()
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
+        should_step = not self.is_grad_accumulation_step
+        if should_step:
+            self.optimizer.step()
+            self.lr_scheduler.step()
+            self.optimizer.zero_grad()
 
         flush()
 

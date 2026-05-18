@@ -12,6 +12,8 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
 
   // Create a Ref to track the job state without triggering re-renders
   const jobRef = useRef<Job | null>(null);
+  const statusRef = useRef<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const lastJobSnapshotRef = useRef<string>('');
   const requestController = useRef<AbortController | null>(null);
 
   // Keep the Ref in sync with state
@@ -19,12 +21,16 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
     jobRef.current = job;
   }, [job]);
 
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
   const refreshJob = useCallback(() => {
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
 
-    if (status === 'idle') setStatus('loading');
+    if (statusRef.current === 'idle') setStatus('loading');
 
     apiClient
       .get(`/api/job-status/${jobID}`, { signal: controller.signal })
@@ -50,8 +56,12 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
           normalizedJob.job_config_text = currentJob.job_config_text;
         }
 
-        setJob(normalizedJob);
-        if (status !== 'success') setStatus('success');
+        const nextSnapshot = JSON.stringify(normalizedJob);
+        if (lastJobSnapshotRef.current !== nextSnapshot) {
+          lastJobSnapshotRef.current = nextSnapshot;
+          setJob(normalizedJob);
+        }
+        if (statusRef.current !== 'success') setStatus('success');
       })
       .catch(error => {
         if (axios.isAxiosError(error)) {
@@ -62,7 +72,7 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
         console.error('Error fetching job:', error);
         setStatus('error');
       });
-  }, [jobID, status]);
+  }, [jobID]);
 
   useEffect(() => () => requestController.current?.abort(), []);
 

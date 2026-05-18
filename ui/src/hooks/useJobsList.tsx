@@ -1,16 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '@/utils/api';
 import { Job } from '@/utils/types';
 
 export default function useJobsList(onlyActive = false, reloadInterval: null | number = null) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const statusRef = useRef<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const jobsSnapshotRef = useRef('');
 
-  const refreshJobs = () => {
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const refreshJobs = useCallback(() => {
     // Don't set loading on every refresh to avoid flicker
-    if (status === 'idle') setStatus('loading');
+    if (statusRef.current === 'idle') setStatus('loading');
 
     apiClient
       .get('/api/jobs')
@@ -31,14 +37,18 @@ export default function useJobsList(onlyActive = false, reloadInterval: null | n
             return (b.created_at || '').localeCompare(a.created_at || '');
         });
 
-        setJobs(fetchedJobs);
-        setStatus('success');
+        const nextSnapshot = JSON.stringify(fetchedJobs);
+        if (jobsSnapshotRef.current !== nextSnapshot) {
+          jobsSnapshotRef.current = nextSnapshot;
+          setJobs(fetchedJobs);
+        }
+        if (statusRef.current !== 'success') setStatus('success');
       })
       .catch(error => {
         console.error('Error fetching jobs:', error);
-        setStatus('error');
+        if (statusRef.current !== 'error') setStatus('error');
       });
-  };
+  }, [onlyActive]);
 
   useEffect(() => {
     refreshJobs();
@@ -47,7 +57,7 @@ export default function useJobsList(onlyActive = false, reloadInterval: null | n
       const interval = setInterval(refreshJobs, reloadInterval);
       return () => clearInterval(interval);
     }
-  }, [onlyActive, reloadInterval]);
+  }, [reloadInterval, refreshJobs]);
 
   return { jobs, setJobs, status, refreshJobs };
 }

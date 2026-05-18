@@ -1,11 +1,11 @@
 import React, { useRef, useEffect, useState, ReactNode, useMemo } from 'react';
 import { isVideo } from '@/utils/basic';
+import { buildApiFileURL } from '@/utils/api';
+import Image from 'next/image';
 
 interface SampleImageCardProps {
   imageUrl: string;
   alt: string;
-  numSamples: number;
-  sampleImages: string[];
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
@@ -19,8 +19,6 @@ interface SampleImageCardProps {
 const SampleImageCard: React.FC<SampleImageCardProps> = ({
   imageUrl,
   alt,
-  numSamples,
-  sampleImages,
   children,
   className = '',
   onClick = () => {},
@@ -34,10 +32,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
   // Construct the full URL using the environment variable
   const fullImageSrc = useMemo(() => {
-    const baseUrl = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
-    const cleanBase = baseUrl.replace(/\/$/, '');
-    // Do not encodeURIComponent here for the path parts, assuming backend handles path params
-    return `${cleanBase}/api/files/${imageUrl}`;
+    return buildApiFileURL(imageUrl);
   }, [imageUrl]);
 
   // Observe both enter and exit
@@ -95,12 +90,13 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                 controls={false}
               />
             ) : (
-              <img
+              <Image
                 src={fullImageSrc}
                 alt={alt}
                 onLoad={handleLoad}
-                loading="lazy"
-                decoding="async"
+                fill
+                sizes="10vw"
+                unoptimized
                 className={`w-full h-full object-cover transition-opacity duration-300 ${
                   loaded ? 'opacity-100' : 'opacity-0'
                 }`}

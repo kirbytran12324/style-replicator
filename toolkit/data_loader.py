@@ -418,21 +418,59 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         self.resolution = dataset_config.resolution
         self.caption_dict = None
         self.file_list: List['FileItemDTO'] = []
+        file_list: List[str] = []
 
         # check if dataset_path is a folder or json
+        manifest_file = None
+        manifest_version = "0.1.0"
         if os.path.isdir(self.dataset_path):
+            manifest_file = os.path.join(self.dataset_path, '.aitk_manifest.json')
             extensions = image_extensions
             if self.is_video:
                 # only look for videos
                 extensions = video_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
+
+            manifest_files = None
+            if manifest_file and os.path.exists(manifest_file):
+                try:
+                    with open(manifest_file, 'r') as f:
+                        manifest = json.load(f)
+                    dataset_mtime = os.path.getmtime(self.dataset_path)
+                    manifest_mtime = manifest.get('dataset_root_mtime', 0)
+                    if manifest.get('version') == manifest_version and manifest_mtime >= dataset_mtime:
+                        manifest_files = manifest.get('files', [])
+                        file_list = [os.path.join(self.dataset_path, rel_path) for rel_path in manifest_files]
+                except Exception as e:
+                    print_acc(f"Warning: failed to load dataset manifest: {manifest_file}")
+
+            if not manifest_files:
+                file_list = [
+                    os.path.join(root, file)
+                    for root, _, files in os.walk(self.dataset_path)
+                    for file in files
+                    if file.lower().endswith(tuple(extensions))
+                ]
+                # remove items in the _controls_ folder
+                file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
+                if manifest_file:
+                    try:
+                        dataset_mtime = os.path.getmtime(self.dataset_path)
+                        rel_files = [os.path.relpath(path, self.dataset_path) for path in file_list]
+                        with open(manifest_file, 'w') as f:
+                            json.dump({
+                                "version": manifest_version,
+                                "dataset_root_mtime": dataset_mtime,
+                                "files": rel_files,
+                            }, f)
+                    except Exception:
+                        print_acc(f"Warning: failed to write dataset manifest: {manifest_file}")
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
                 self.caption_dict = json.load(f)
                 # keys are file paths
                 file_list = list(self.caption_dict.keys())
-                
+
         # remove items in the _controls_ folder
         file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
 
@@ -577,7 +615,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         return len(self.file_list)
 
     def _get_single_item(self, index) -> 'FileItemDTO':
-        file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
+        base_item: 'FileItemDTO' = self.file_list[index]
+        file_item = base_item.clone_for_batch() if hasattr(base_item, 'clone_for_batch') else copy.deepcopy(base_item)
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
         return file_item
