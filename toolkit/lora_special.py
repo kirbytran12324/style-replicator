@@ -182,6 +182,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_pixart: bool = False,
             is_auraflow: bool = False,
             is_flux: bool = False,
+            is_flux2_klein: bool = False,
             is_lumina2: bool = False,
             use_bias: bool = False,
             is_lorm: bool = False,
@@ -249,6 +250,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.is_pixart = is_pixart
         self.is_auraflow = is_auraflow
         self.is_flux = is_flux
+        self.is_flux2_klein = is_flux2_klein
         self.is_lumina2 = is_lumina2
         self.network_type = network_type
         self.is_assistant_adapter = is_assistant_adapter
@@ -267,7 +269,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         
 
         # always do peft for flux only for now
-        if self.is_flux or self.is_v3 or self.is_lumina2 or is_transformer:
+        if self.is_flux or self.is_flux2_klein or self.is_v3 or self.is_lumina2 or is_transformer:
             # don't do peft format for lokr
             if self.network_type.lower() != "lokr":
                 self.peft_format = True
@@ -310,7 +312,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             unet_prefix = self.LORA_PREFIX_UNET
             if self.peft_format:
                 unet_prefix = self.PEFT_PREFIX_UNET
-            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or self.is_transformer:
+            if is_pixart or is_v3 or is_auraflow or is_flux or is_flux2_klein or is_lumina2 or self.is_transformer:
                 unet_prefix = f"lora_transformer"
                 if self.peft_format:
                     unet_prefix = "transformer"
@@ -502,7 +504,12 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
         if is_flux:
             target_modules = ["FluxTransformer2DModel"]
-        
+
+        if is_flux2_klein:
+            # Diffusers builds can expose Klein transformer class names differently.
+            # Support both to avoid creating zero LoRA modules on startup.
+            target_modules = ["Flux2Transformer2DModel", "FluxTransformer2DModel"]
+
         if is_lumina2:
             target_modules = ["Lumina2Transformer2DModel"]
 

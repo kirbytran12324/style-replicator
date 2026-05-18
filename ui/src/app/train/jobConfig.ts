@@ -40,6 +40,16 @@ export const defaultJobConfig: JobConfig = {
         device: 'cuda',
         trigger_word: null,
         performance_log_every: 10,
+        logging: {
+          log_every: 100,
+          track_resources: true,
+          resource_log_every: 0,
+          resource_log_seconds: 0.0,
+          use_otel: true,
+          otel_service_name: 'ai-toolkit',
+          write_metrics_csv: true,
+          write_metrics_jsonl: true,
+        },
         network: {
           type: 'lora',
           linear: 32,
@@ -167,7 +177,7 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     Array.isArray(jobConfig.config.process[0].sample.prompts) &&
     jobConfig.config.process[0].sample.prompts.length > 0
   ) {
-    let newSamples = [];
+    const newSamples = [];
     for (const prompt of jobConfig.config.process[0].sample.prompts) {
       newSamples.push({
         prompt: prompt,

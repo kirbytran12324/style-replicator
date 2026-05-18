@@ -12,15 +12,18 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
   const [log, setLog] = useState<string>('');
   const didInitialLoadRef = useRef(false);
   const requestController = useRef<AbortController | null>(null);
+  const statusRef = useRef<'idle' | 'loading' | 'success' | 'error' | 'refreshing'>('idle');
+  const lastLogRef = useRef('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'refreshing'>('idle');
 
-  const refresh = useCallback(() => {
-    let loadStatus: 'loading' | 'refreshing' = 'loading';
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
-    if (didInitialLoadRef.current) {
-      loadStatus = 'refreshing';
+  const refresh = useCallback(() => {
+    if (!didInitialLoadRef.current && statusRef.current !== 'loading') {
+      setStatus('loading');
     }
-    setStatus(loadStatus);
 
     requestController.current?.abort();
     const controller = new AbortController();
@@ -30,10 +33,12 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
       .get(`/api/jobs/${jobID}/log`, { signal: controller.signal })
       .then(res => res.data)
       .then(data => {
-        if (data.log) {
-          setLog(clean(data.log));
+        const cleanedLog = data.log ? clean(data.log) : '';
+        if (lastLogRef.current !== cleanedLog) {
+          lastLogRef.current = cleanedLog;
+          setLog(cleanedLog);
         }
-        setStatus('success');
+        if (statusRef.current !== 'success') setStatus('success');
         didInitialLoadRef.current = true;
       })
       .catch(error => {
@@ -44,7 +49,7 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
         }
         if (error.response?.status !== 404) {
              console.error('Error fetching log:', error);
-             setStatus('error');
+             if (statusRef.current !== 'error') setStatus('error');
         }
       });
   }, [jobID]);

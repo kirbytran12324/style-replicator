@@ -40,9 +40,21 @@ class LoggingConfig:
     def __init__(self, **kwargs):
         self.log_every: int = kwargs.get('log_every', 100)
         self.verbose: bool = kwargs.get('verbose', False)
-        self.use_wandb: bool = kwargs.get('use_wandb', False)
-        self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
-        self.run_name: str = kwargs.get('run_name', None)
+        # Controls custom training metric export attempts only. Modal native OTEL
+        # for platform logs/container metrics is configured at the Modal workspace.
+        self.use_otel: bool = kwargs.get('use_otel', True)
+        self.otel_service_name: str = kwargs.get('otel_service_name', 'ai-toolkit')
+        # Legacy/direct-export overrides. Prefer OTEL_EXPORTER_OTLP_* env vars,
+        # including Modal collector env vars when custom metrics are enabled.
+        self.otel_exporter_endpoint: Optional[str] = kwargs.get('otel_exporter_endpoint', None)
+        self.otel_exporter_headers: Optional[str] = kwargs.get('otel_exporter_headers', None)
+        self.otel_dashboard_url: Optional[str] = kwargs.get('otel_dashboard_url', None)
+        self.track_resources: bool = kwargs.get('track_resources', True)
+        self.resource_log_every: int = kwargs.get('resource_log_every', 0)
+        self.resource_log_seconds: float = kwargs.get('resource_log_seconds', 0.0)
+        self.write_metrics_csv: bool = kwargs.get('write_metrics_csv', True)
+        self.write_metrics_jsonl: bool = kwargs.get('write_metrics_jsonl', True)
+        self.disable_tensorboard_in_modal: bool = kwargs.get('disable_tensorboard_in_modal', True)
 
 class SampleItem:
     def __init__(
@@ -548,7 +560,7 @@ class TrainConfig:
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'flux2_klein']
 
 
 class ModelConfig:
@@ -563,12 +575,10 @@ class ModelConfig:
         self.is_auraflow: bool = kwargs.get('is_auraflow', False)
         self.is_v3: bool = kwargs.get('is_v3', False)
         self.is_flux: bool = kwargs.get('is_flux', False)
+        self.is_flux2_klein: bool = kwargs.get('is_flux2_klein', False)
         self.is_lumina2: bool = kwargs.get('is_lumina2', False)
-        if self.is_pixart_sigma:
-            self.is_pixart = True
-        self.use_flux_cfg = kwargs.get('use_flux_cfg', False)
-        self.is_ssd: bool = kwargs.get('is_ssd', False)
         self.is_vega: bool = kwargs.get('is_vega', False)
+        self.is_ssd: bool = kwargs.get('is_ssd', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.vae_path = kwargs.get('vae_path', None)
@@ -690,6 +700,8 @@ class ModelConfig:
                 self.is_auraflow = True
             elif self.arch == 'flux':
                 self.is_flux = True
+            elif self.arch == 'flux2_klein':
+                self.is_flux2_klein = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
             elif self.arch == 'vega':
@@ -713,6 +725,8 @@ class ModelConfig:
                 self.arch = 'auraflow'
             elif kwargs.get('is_flux', False):
                 self.arch = 'flux'
+            elif kwargs.get('is_flux2_klein', False):
+                self.arch = 'flux2_klein'
             elif kwargs.get('is_lumina2', False):
                 self.arch = 'lumina2'
             elif kwargs.get('is_vega', False):
@@ -850,7 +864,7 @@ class DatasetConfig:
         self.network_weight: float = float(kwargs.get('network_weight', 1.0))
         self.token_dropout_rate: float = float(kwargs.get('token_dropout_rate', 0.0))
         self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
-        self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
+        self.caption_dropout_rate: float = kwargs.get('caption_dropout_rate', 0.0)
         self.keep_tokens: int = kwargs.get('keep_tokens', 0)  # #of first tokens to always keep unless caption dropped
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_y', False)
@@ -896,6 +910,7 @@ class DatasetConfig:
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+        self.cache_latents_batch_size: int = kwargs.get('cache_latents_batch_size', 1)
         self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
         self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
 

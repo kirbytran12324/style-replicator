@@ -1,0 +1,116 @@
+---
+job: "train"
+config:
+  name: "KNHB-flux2-klein-style-v2"
+  training_folder: "output"
+  process:
+    - type: "sd_trainer"
+      sqlite_db_path: "/root/ai-toolkit/aitk_db.db"
+      device: "cuda"
+      trigger_word: null
+      performance_log_every: 50
+
+      network:
+        type: "lora"
+        linear: 24
+        linear_alpha: 16
+        dropout: 0.1
+        transformer_only: true
+        network_kwargs:
+          ignore_if_contains: []
+
+      save:
+        dtype: "bf16"
+        save_every: 200
+        max_step_saves_to_keep: 8
+        save_format: "diffusers"
+        push_to_hub: false
+
+      datasets:
+        - folder_path: "/root/modal_output/datasets/knhb_flux2_style_v2"
+          mask_path: null
+          mask_min_value: 0.1
+          default_caption: "Pokemon character scene, soft watercolor illustration, pale paper texture, loose colored-pencil outlines, pastel light, <knhb-style>"
+          caption_ext: "json"
+          caption_dropout_rate: 0.0
+          token_dropout_rate: 0.0
+          shuffle_tokens: false
+          keep_tokens: 0
+          cache_latents_to_disk: true
+          is_reg: false
+          network_weight: 1
+          resolution: [768, 1024]
+          controls: []
+          shrink_video_to_frames: true
+          num_frames: 1
+          do_i2v: true
+          flip_x: false
+          flip_y: false
+
+      train:
+        batch_size: 1
+        bypass_guidance_embedding: false
+        steps: 1600
+        gradient_accumulation: 4
+        short_and_long_captions: true
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        timestep_type: "weighted"
+        content_or_style: "style"
+        optimizer_params:
+          weight_decay: 0.0001
+        unload_text_encoder: false
+        cache_text_embeddings: false
+        lr: 2.5e-5
+        lr_scheduler: "cosine"
+        lr_scheduler_params:
+          total_iters: 1600
+          warmup_steps: 100
+        ema_config:
+          use_ema: true
+          ema_decay: 0.995
+        skip_first_sample: true
+        force_first_sample: false
+        disable_sampling: false
+        dtype: "bf16"
+        diff_output_preservation: false
+        diff_output_preservation_multiplier: 0.5
+        diff_output_preservation_class: "pokemon"
+        switch_boundary_every: 1
+        loss_type: "mse"
+        max_grad_norm: 1.0
+
+      model:
+        name_or_path: "black-forest-labs/FLUX.2-klein-base-4B"
+        arch: "flux2_klein"
+        quantize: false
+        quantize_te: false
+        dtype: "bf16"
+        low_vram: false
+        model_kwargs: {}
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 200
+        width: 1024
+        height: 1024
+        prompts:
+          - "Pikachu and Bulbasaur having a picnic under cherry blossoms, <knhb-style>"
+          - "Goodra holding a decorated cake with Galvantula nearby on a soft pink background, <knhb-style>"
+          - "Scolipede and Galvantula resting on a grassy hill, <knhb-style>"
+          - "Dragonite and Tatsugiri delivering mail in matching postman outfits through a windmill village, <knhb-style>"
+          - "Mega Dragonite standing in a bright field with white head wings and a glowing tail orb, <knhb-style>"
+        neg: ""
+        seed: 149
+        walk_seed: true
+        guidance_scale: 3.0
+        sample_steps: 30
+        num_frames: 1
+        fps: 1
+
+meta:
+  name: "[name]"
+  version: "1.0"

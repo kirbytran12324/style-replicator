@@ -6,7 +6,8 @@ import { SampleConfig, SampleItem } from '@/utils/types';
 import { Cog } from 'lucide-react';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
-import { apiClient } from '@/utils/api';
+import { apiClient, buildApiFileURL } from '@/utils/api';
+import Image from 'next/image';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -45,11 +46,6 @@ export default function SampleImageViewer({
 
   const onCancel = useCallback(() => setIsOpen(false), []);
 
-  const baseUrl = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_MODAL_API_URL || '';
-    return url.replace(/\/$/, '');
-  }, []);
-
   const imgInfo = useMemo(() => {
     const ii = { filename: '', step: 0, promptIdx: 0 };
     if (imgPath) {
@@ -84,7 +80,7 @@ export default function SampleImageViewer({
       if (idx < 0 || idx >= sampleImages.length) return;
       onChange(sampleImages[idx]);
     },
-    [sampleImages, numSamples, onChange],
+    [sampleImages, onChange],
   );
 
   const currentIndex = useMemo(() => {
@@ -109,7 +105,7 @@ export default function SampleImageViewer({
     const nextIdx = currentIndex - 1;
     if (nextIdx < minIdx) return;
     setImageAtIndex(nextIdx);
-  }, [sampleImages, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
+  }, [currentIndex, imgInfo.promptIdx, setImageAtIndex]);
 
   const handleArrowRight = useCallback(() => {
     if (currentIndex === -1) return;
@@ -118,7 +114,7 @@ export default function SampleImageViewer({
     const nextIdx = currentIndex + 1;
     if (nextIdx > maxIdx) return;
     setImageAtIndex(nextIdx);
-  }, [sampleImages, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
+  }, [currentIndex, imgInfo.promptIdx, numSamples, setImageAtIndex]);
 
   const sampleItem = useMemo<SampleItem | null>(() => {
     if (!sampleConfig) return null;
@@ -156,7 +152,7 @@ export default function SampleImageViewer({
       return sampleConfig.seed + imgInfo.promptIdx;
     }
     return sampleConfig?.seed ?? '?';
-  }, [sampleItem, sampleConfig]);
+  }, [sampleItem, sampleConfig, imgInfo.promptIdx]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -201,9 +197,12 @@ export default function SampleImageViewer({
           >
             <div className="overflow-hidden flex items-center justify-center">
               {imgPath && (
-                <img
-                  src={`${baseUrl}/api/files/${imgPath}`}
+                <Image
+                  src={buildApiFileURL(imgPath)}
                   alt="Sample Image"
+                  width={1600}
+                  height={1600}
+                  unoptimized
                   className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
                 />
               )}
@@ -222,10 +221,13 @@ export default function SampleImageViewer({
               {controlImages.length > 0 && (
                 <div key={imgPath} className="flex space-x-2 mr-4">
                   {controlImages.map((ci, idx) => (
-                    <img
+                    <Image
                       key={idx}
-                      src={`${baseUrl}/api/files/${ci}`}
+                      src={buildApiFileURL(ci)}
                       alt={`Control ${idx + 1}`}
+                      width={48}
+                      height={48}
+                      unoptimized
                       className="max-h-12 max-w-12 object-contain bg-black border border-gray-700 rounded"
                     />
                   ))}
@@ -257,7 +259,7 @@ export default function SampleImageViewer({
                     <div
                       className="cursor-pointer"
                       onClick={() => {
-                        let message = `Are you sure you want to delete this sample? This action cannot be undone.`;
+                        const message = `Are you sure you want to delete this sample? This action cannot be undone.`;
                         openConfirm({
                           title: 'Delete Sample',
                           message: message,

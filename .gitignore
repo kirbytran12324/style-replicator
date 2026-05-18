@@ -199,10 +199,15 @@ ui/.env
 ui/.open-next
 
 modal_output/
-config/
-extensions_built_in/
+# config/
+# extensions_built_in/
 output/
 prior_data/
 
 .gitignore
 .gitmodules
+
+!/config/
+!/config/**
+!/extensions_built_in/
+!/extensions_built_in/**

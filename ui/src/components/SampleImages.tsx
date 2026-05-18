@@ -3,64 +3,9 @@ import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { JobConfig, Job } from '@/utils/types';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
-import { Button } from '@headlessui/react';
-import { FaDownload } from 'react-icons/fa';
-import { apiClient } from '@/utils/api';
-import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
 
-interface SampleImagesMenuProps {
-  job?: Job | null;
-}
-
-export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
-  const [isZipping, setIsZipping] = useState(false);
-
-  const downloadZip = async () => {
-    if (isZipping) return;
-    setIsZipping(true);
-
-    try {
-      const res = await apiClient.post('/api/zip', {
-        zipTarget: 'samples',
-        // CHANGED: Use config_name instead of name, fallback to id if missing
-        jobName: job?.config_name || job?.job_id,
-      });
-
-      const zipPath = res.data.zipPath; // e.g. /mnt/Train2/out/ui/.../samples.zip
-      if (!zipPath) throw new Error('No zipPath in response');
-
-      const downloadPath = `/api/files/${encodeURIComponent(zipPath)}`;
-      const a = document.createElement('a');
-      a.href = downloadPath;
-      // optional: suggest filename (browser may ignore if server sets Content-Disposition)
-      a.download = 'samples.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch (err) {
-      console.error('Error downloading zip:', err);
-    } finally {
-      setIsZipping(false);
-    }
-  };
-  return (
-    <Button
-      onClick={downloadZip}
-      className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
-        'opacity-50 cursor-not-allowed': isZipping,
-      })}
-    >
-      {isZipping ? (
-        <LuLoader className="animate-spin inline-block mr-2" />
-      ) : (
-        <FaDownload className="inline-block mr-2" />
-      )}
-      {isZipping ? 'Preparing' : 'Download'}
-    </Button>
-  );
-};
 
 interface SampleImagesProps {
   job: Job;
@@ -152,91 +97,9 @@ export default function SampleImages({ job }: SampleImagesProps) {
     );
   }, [status, sampleImages.length]);
 
-  const gridColsClass = useMemo(() => {
+  const gridTemplateColumns = useMemo(() => {
     const cols = Math.min(numSamples, 40);
-
-    switch (cols) {
-      case 1:
-      case 2:
-      case 3:
-        return 'grid-cols-3';
-      case 4:
-        return 'grid-cols-4';
-      case 5:
-        return 'grid-cols-5';
-      case 6:
-        return 'grid-cols-6';
-      case 7:
-        return 'grid-cols-7';
-      case 8:
-        return 'grid-cols-8';
-      case 9:
-        return 'grid-cols-9';
-      case 10:
-        return 'grid-cols-10';
-      case 11:
-        return 'grid-cols-11';
-      case 12:
-        return 'grid-cols-12';
-      case 13:
-        return 'grid-cols-13';
-      case 14:
-        return 'grid-cols-14';
-      case 15:
-        return 'grid-cols-15';
-      case 16:
-        return 'grid-cols-16';
-      case 17:
-        return 'grid-cols-17';
-      case 18:
-        return 'grid-cols-18';
-      case 19:
-        return 'grid-cols-19';
-      case 20:
-        return 'grid-cols-20';
-      case 21:
-        return 'grid-cols-21';
-      case 22:
-        return 'grid-cols-22';
-      case 23:
-        return 'grid-cols-23';
-      case 24:
-        return 'grid-cols-24';
-      case 25:
-        return 'grid-cols-25';
-      case 26:
-        return 'grid-cols-26';
-      case 27:
-        return 'grid-cols-27';
-      case 28:
-        return 'grid-cols-28';
-      case 29:
-        return 'grid-cols-29';
-      case 30:
-        return 'grid-cols-30';
-      case 31:
-        return 'grid-cols-31';
-      case 32:
-        return 'grid-cols-32';
-      case 33:
-        return 'grid-cols-33';
-      case 34:
-        return 'grid-cols-34';
-      case 35:
-        return 'grid-cols-35';
-      case 36:
-        return 'grid-cols-36';
-      case 37:
-        return 'grid-cols-37';
-      case 38:
-        return 'grid-cols-38';
-      case 39:
-        return 'grid-cols-39';
-      case 40:
-        return 'grid-cols-40';
-      default:
-        return 'grid-cols-3';
-    }
+    return `repeat(${Math.max(cols, 3)}, minmax(0, 1fr))`;
   }, [numSamples]);
 
   const sampleConfig = useMemo(() => {
@@ -264,7 +127,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
       <div className="pb-4">
         {PageInfoContent}
         {sampleImages && (
-          <div className={`grid ${gridColsClass} gap-1`}>
+          <div className="grid gap-1" style={{ gridTemplateColumns }}>
             {sampleImages.map((sample: string, idx: number) => {
               const groupIndex = Math.floor(idx / numSamples);
               const groupStart = groupIndex * numSamples;
@@ -280,8 +143,6 @@ export default function SampleImages({ job }: SampleImagesProps) {
                 <div key={sample} className="contents">
                   <SampleImageCard
                     imageUrl={sample}
-                    numSamples={numSamples}
-                    sampleImages={sampleImages}
                     alt="Sample Image"
                     onClick={() => setSelectedSamplePath(sample)}
                     observerRoot={containerRef.current}

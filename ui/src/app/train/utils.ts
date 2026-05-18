@@ -1,5 +1,5 @@
-import { GroupedSelectOption, JobConfig, SelectOption } from '@/utils/types';
-import { modelArchs, ModelArch } from './options';
+import { JobConfig } from '@/utils/types';
+import { modelArchs } from './options';
 import { objectCopy } from '@/utils/basic';
 
 export const handleModelArchChange = (

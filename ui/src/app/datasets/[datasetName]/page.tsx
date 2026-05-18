@@ -13,11 +13,11 @@ import { useRouter } from 'next/navigation';
 
 export const dynamic = 'force-static';
 
-export default function DatasetPage({ params }: { params: { datasetName: string } }) {
+export default function DatasetPage({ params }: { params: Promise<{ datasetName: string }> }) {
   const router = useRouter();
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   // Unwrap params using React.use()
-  const usableParams = use(params as any) as { datasetName: string };
+  const usableParams = use(params);
   const datasetName = usableParams.datasetName; // Note: this is already decoded by Next.js
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 

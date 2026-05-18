@@ -1,12 +1,5 @@
-import json
-import os
-
-from jobs import BaseJob
-from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoint
+from jobs.BaseJob import BaseJob
 from collections import OrderedDict
-from typing import List
-from jobs.process import BaseExtractProcess, TrainFineTuneProcess
-from datetime import datetime
 
 
 process_dict = {
@@ -23,8 +16,9 @@ process_dict = {
 
 class TrainJob(BaseJob):
 
-    def __init__(self, config: OrderedDict):
+    def __init__(self, config: OrderedDict, job_id: str | None = None):
         super().__init__(config)
+        self.job_id = job_id
         self.training_folder = self.get_conf('training_folder', required=True)
         self.is_v2 = self.get_conf('is_v2', False)
         self.device = self.get_conf('device', 'cpu')

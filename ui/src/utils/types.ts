@@ -205,6 +205,21 @@ export interface SliderConfig {
   anchor_class?: string | null;
 }
 
+export interface LoggingConfig {
+  log_every?: number;
+  verbose?: boolean;
+  use_otel?: boolean;
+  otel_service_name?: string | null;
+  otel_exporter_endpoint?: string | null;
+  otel_exporter_headers?: string | null;
+  otel_dashboard_url?: string | null;
+  track_resources?: boolean;
+  resource_log_every?: number;
+  resource_log_seconds?: number;
+  write_metrics_csv?: boolean;
+  write_metrics_jsonl?: boolean;
+}
+
 export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
@@ -212,6 +227,7 @@ export interface ProcessConfig {
   performance_log_every: number;
   trigger_word: string | null;
   device: string;
+  logging?: LoggingConfig;
   network?: NetworkConfig;
   slider?: SliderConfig;
   save: SaveConfig;
@@ -276,4 +292,33 @@ export interface Job {
     info?: Record<string, any>;
     updated_at?: string;
   } | null;
+}
+
+export interface JobMetricsRecord {
+  timestamp?: string;
+  step?: number | string;
+  job_id?: string;
+  [key: string]: any;
+}
+
+export interface JobMetricsResponse {
+  has_metrics: boolean;
+  records: JobMetricsRecord[];
+  fields: string[];
+  logging?: LoggingConfig;
+  otel?: {
+    service_name?: string | null;
+    exporter_endpoint?: string | null;
+    dashboard_url?: string | null;
+    status?: 'not_started' | 'exporting' | 'disabled' | string;
+    disabled_reason?: string | null;
+  };
+}
+
+export interface JobReportsResponse {
+  reports: {
+    html: string[];
+    png: string[];
+  };
+  latest_dir?: string | null;
 }

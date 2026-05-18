@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Union
 import cv2
 import torch
 import random
+import copy
 
 from PIL import Image
 from PIL.ImageOps import exif_transpose
@@ -123,6 +124,22 @@ class FileItemDTO(
         self.is_reg = self.dataset_config.is_reg
         self.prior_reg = self.dataset_config.prior_reg
         self.tensor: Union[torch.Tensor, None] = None
+
+    def clone_for_batch(self) -> 'FileItemDTO':
+        clone = copy.copy(self)
+        clone.tensor = None
+        clone.control_tensor = None
+        clone.control_tensor_list = None
+        clone.inpaint_tensor = None
+        clone.clip_image_tensor = None
+        clone.mask_tensor = None
+        clone.unaugmented_tensor = None
+        clone.unconditional_tensor = None
+        clone.unconditional_latents = None
+        clone.prompt_embeds = None
+        clone.clip_image_embeds = None
+        clone.clip_image_embeds_unconditional = None
+        return clone
 
     def cleanup(self):
         self.tensor = None

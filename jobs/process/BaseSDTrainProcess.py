@@ -7,6 +7,7 @@ import shutil
 from collections import OrderedDict
 import os
 import re
+import time
 import traceback
 from typing import Union, List, Optional
 
@@ -19,8 +20,7 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
-from huggingface_hub import HfApi, Repository, interpreter_login
-from huggingface_hub.utils import HfFolder
+from huggingface_hub import HfApi, interpreter_login
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
@@ -62,6 +62,8 @@ from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, Netw
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
     DecoratorConfig
 from toolkit.logging_aitk import create_logger
+from toolkit.report_generator import generate_reports
+from toolkit.resource_tracker import get_resource_snapshot
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc
@@ -127,7 +129,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
-        self.logger = create_logger(self.logging_config, config)
+        self.job_id = getattr(self.job, 'job_id', None)
+        modal_task_id = os.environ.get('MODAL_TASK_ID')
+        tags = []
+        if self.job_id:
+            tags.append(f"job_id:{self.job_id}")
+        if modal_task_id:
+            tags.append(f"modal_task_id:{modal_task_id}")
+        self.logger = create_logger(
+            self.logging_config,
+            config,
+            job_id=self.job_id,
+            metrics_dir=self.save_root,
+            tags=tags,
+        )
+
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -264,6 +280,41 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
+        self._last_resource_snapshot_time = 0.0
+        self._cached_resource_snapshot = None
+
+    def _get_resource_snapshot(self, step: Optional[int]) -> dict:
+        if not self.logging_config.track_resources:
+            return {}
+        every_steps = int(getattr(self.logging_config, 'resource_log_every', 0) or 0)
+        every_seconds = float(getattr(self.logging_config, 'resource_log_seconds', 0.0) or 0.0)
+        now = time.time()
+
+        should_refresh = True
+        if every_steps > 1 and step is not None:
+            should_refresh = (step % every_steps == 0)
+        if every_seconds > 0 and (now - self._last_resource_snapshot_time) < every_seconds:
+            should_refresh = False
+
+        if not should_refresh and self._cached_resource_snapshot is not None:
+            return self._cached_resource_snapshot
+
+        snapshot = get_resource_snapshot()
+        self._cached_resource_snapshot = snapshot
+        self._last_resource_snapshot_time = now
+        return snapshot
+
+    def _build_log_payload(self, loss_dict, learning_rate: float, step: Optional[int]) -> dict:
+        payload = {
+            "learning_rate": learning_rate,
+            "loss": loss_dict.get("loss") if isinstance(loss_dict, dict) else None,
+        }
+        if isinstance(loss_dict, dict):
+            for key, value in loss_dict.items():
+                payload[f"loss/{key}"] = value
+        if self.logging_config.track_resources:
+            payload.update(self._get_resource_snapshot(step))
+        return payload
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -754,6 +805,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for param in group['params']:
                 if isinstance(param, torch.nn.Parameter):  # Ensure it's a proper parameter
                     param.requires_grad_(True)
+        # generate_images uses 'with network:' which resets is_active to False on exit;
+        # restore it here so LoRA layers are applied during the training forward pass
+        if hasattr(self, 'network') and self.network is not None:
+            self.network.is_active = True
 
     def setup_ema(self):
         if self.train_config.ema_config.use_ema:
@@ -1475,7 +1530,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # load adapter from path
             print_acc(f"Loading adapter from {latest_save_path}")
             if is_t2i:
-                loaded_state_dict = load_t2i_model(
+                loaded_state_dict = load_t2_model(
                     latest_save_path,
                     self.device,
                     dtype=dtype
@@ -1533,6 +1588,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.model_config.is_pixart:
                 arch = 'pixart'
             if self.model_config.is_flux:
+                arch = 'flux'
+            if self.model_config.is_flux2_klein:
                 arch = 'flux'
             if self.model_config.is_lumina2:
                 arch = 'lumina2'
@@ -1729,6 +1786,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_pixart=self.model_config.is_pixart,
                     is_auraflow=self.model_config.is_auraflow,
                     is_flux=self.model_config.is_flux,
+                    is_flux2_klein=self.model_config.is_flux2_klein,
                     is_lumina2=self.model_config.is_lumina2,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
@@ -1779,6 +1837,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
 
                 self.network.prepare_grad_etc(text_encoder, unet)
+                # Activate the network for training so LoRA layers are applied during the forward pass
+                self.network.is_active = True
                 flush()
 
                 # LyCORIS doesnt have default_lr
@@ -1999,6 +2059,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")
             self.sample(0, is_first=True)
+            # Sampling puts network into eval mode — restore requires_grad on LoRA params
+            self.ensure_params_requires_grad(force=True)
+            optimizer.zero_grad()
 
         # sample first
         if self.train_config.skip_first_sample or self.train_config.disable_sampling:
@@ -2006,6 +2069,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
+            # Sampling puts network into eval mode — restore requires_grad on LoRA params
+            self.ensure_params_requires_grad(force=True)
+            optimizer.zero_grad()
         
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(
@@ -2199,7 +2265,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.adapter.clear_memory()
 
             with torch.no_grad():
-                # torch.cuda.empty_cache()
                 # if optimizer has get_lrs method, then use it
                 if hasattr(optimizer, 'get_avg_learning_rate'):
                     learning_rate = optimizer.get_avg_learning_rate()
@@ -2222,9 +2287,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.progress_bar.set_postfix_str(prog_bar_string)
 
                 # if the batch is a DataLoaderBatchDTO, then we need to clean it up
-                if isinstance(batch, DataLoaderBatchDTO):
+                if isinstance(batch_list, list):
                     with self.timer('batch_cleanup'):
-                        batch.cleanup()
+                        for batch in batch_list:
+                            if isinstance(batch, DataLoaderBatchDTO):
+                                batch.cleanup()
+
+                did_log_this_step = False
 
                 # don't do on first step
                 if self.step_num != self.start_step:
@@ -2263,39 +2332,32 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
 
+                    should_log_step = False
+                    if self.logging_config.log_every is None:
+                        should_log_step = True
+                    elif self.logging_config.log_every and self.step_num % self.logging_config.log_every == 0:
+                        should_log_step = True
+
                     if self.logging_config.log_every and self.step_num % self.logging_config.log_every == 0:
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         with self.timer('log_to_tensorboard'):
-                            # log to tensorboard
-                            if self.accelerator.is_main_process:
+                            disable_tensorboard = (
+                                self.logging_config.disable_tensorboard_in_modal
+                                and os.environ.get('MODAL_TASK_ID')
+                            )
+                            if self.accelerator.is_main_process and not disable_tensorboard:
                                 if self.writer is not None:
                                     for key, value in loss_dict.items():
                                         self.writer.add_scalar(f"{key}", value, self.step_num)
-                                    self.writer.add_scalar(f"lr", learning_rate, self.step_num)
-                                if self.progress_bar is not None:
-                                    self.progress_bar.unpause()
-                        
+                                    self.writer.add_scalar("lr", learning_rate, self.step_num)
+                            if self.progress_bar is not None:
+                                self.progress_bar.unpause()
+                    if should_log_step:
                         if self.accelerator.is_main_process:
-                            # log to logger
-                            self.logger.log({
-                                'learning_rate': learning_rate,
-                            })
-                            for key, value in loss_dict.items():
-                                self.logger.log({
-                                    f'loss/{key}': value,
-                                })
-                    elif self.logging_config.log_every is None:
-                        if self.accelerator.is_main_process:
-                            # log every step
-                            self.logger.log({
-                                'learning_rate': learning_rate,
-                            })
-                            for key, value in loss_dict.items():
-                                self.logger.log({
-                                    f'loss/{key}': value,
-                                })
-
+                            log_payload = self._build_log_payload(loss_dict, learning_rate, self.step_num)
+                            self.logger.log(log_payload, step=self.step_num, job_id=self.job_id)
+                            did_log_this_step = True
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:
                         if self.progress_bar is not None:
@@ -2306,17 +2368,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
                 
-                # commit log
-                if self.accelerator.is_main_process:
+                # commit only when a payload was logged this step
+                if self.accelerator.is_main_process and did_log_this_step:
                     self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 if self.progress_bar is not None:
                     self.progress_bar.update(step - self.progress_bar.n)
                 if self.progress_tracker is not None:
-                    self.progress_tracker.update(step=self.step_num, total=self.train_config.steps,
-                                                 info={'loss': loss_dict.get('loss') if isinstance(loss_dict, dict) else None},
-                                                 phase='training')
+                    self.progress_tracker.update(
+                        step=self.step_num,
+                        total=self.train_config.steps,
+                        info={
+                            'loss': loss_dict.get('loss') if isinstance(loss_dict, dict) else None,
+                            'job_id': self.job_id,
+                        },
+                        phase='training'
+                    )
                 #############################
                 # End of step
                 #############################
@@ -2343,6 +2411,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print_acc("")
         if self.accelerator.is_main_process:
             self.save()
+            report_paths = generate_reports(self.save_root)
             self.logger.finish()
         self.accelerator.end_training()
 

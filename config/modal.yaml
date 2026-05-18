@@ -1,0 +1,80 @@
+job: extension
+config:
+  name: "knhb_flux_final"
+  process:
+    - type: 'sd_trainer'
+      # --- MODIFIED PATHS ---
+      training_folder: "/root/modal_output" 
+      sqlite_db_path: "/root/ai-toolkit/aitk_db.db"
+      device: cuda:0
+      performance_log_every: 10
+
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+        conv: 16
+        conv_alpha: 16
+        lokr_full_rank: true
+
+      save:
+        dtype: float16
+        save_every: 200
+        max_step_saves_to_keep: 6
+        save_format: "diffusers"
+        push_to_hub: false
+
+      datasets:
+        - folder_path: "/root/ai-toolkit/datasets/knhb"
+          caption_ext: "txt"
+          default_caption: "An illustration of Pokemon, <knhb-style>"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          resolution:  
+          controls:
+          shrink_video_to_frames: true
+          num_frames: 1
+          do_i2v: true
+
+        - folder_path: "/root/prior_data/prior_preserve" 
+          caption_ext: "txt"
+          is_class_image: true
+          
+      train:
+        batch_size: 2
+        steps: 3500
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        optimizer_params:
+          weight_decay: 1e-4
+        lr: 4e-5
+        lr_scheduler: "cosine"
+        lr_warmup_steps: 150
+        ema_config:
+          use_ema: true
+          ema_decay: 0.995
+        disable_sampling: true
+        dtype: bf16 # Crucial for A100 stability with 12B model
+        # --- ADDED: ACTIVATES REGULARIZATION ---
+        prior_loss_weight: 1.0 
+
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true
+        low_vram: false
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 500
+        width: 1536
+        height: 1536
+        prompts:
+          - "Dragonite, <knhb-style>"
+        seed: 42
+        guidance_scale: 4
+        sample_steps: 20

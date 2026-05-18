@@ -82,6 +82,7 @@ export default function AddImagesModal() {
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
       'video/*': ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'],
       'text/*': ['.txt'],
+      'application/json': ['.json'],
     },
     multiple: true,
   });

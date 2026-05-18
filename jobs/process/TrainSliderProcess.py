@@ -660,8 +660,10 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 del loss
                 # flush()
 
-        optimizer.step()
-        lr_scheduler.step()
+        should_step = not self.is_grad_accumulation_step
+        if should_step:
+            optimizer.step()
+            lr_scheduler.step()
 
         loss_float = sum(loss_list) / len(loss_list)
         if anchor_loss_float is not None:

@@ -1,0 +1,104 @@
+---
+job: "train"
+config:
+  name: "perf-smoke-modal"
+  training_folder: "output"
+  process:
+    - type: "sd_trainer"
+      sqlite_db_path: "./aitk_db.db"
+      device: "cuda"
+      trigger_word: "<knhb-style>"
+      performance_log_every: 0
+
+      logging:
+        log_every: 1
+        use_otel: true
+        otel_service_name: "ai-toolkit-smoke"
+        track_resources: true
+        resource_log_every: 5
+        resource_log_seconds: 2.0
+        write_metrics_csv: true
+        write_metrics_jsonl: true
+
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+        conv: 8
+        conv_alpha: 8
+        network_kwargs:
+          ignore_if_contains: []
+
+      save:
+        dtype: "bf16"
+        save_every: 10
+        max_step_saves_to_keep: 2
+        save_format: "diffusers"
+        push_to_hub: false
+
+      datasets:
+        - folder_path: "/root/modal_output/datasets/KNHB"
+          default_caption: "An illustration of Pokemon, <knhb-style>"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          is_reg: false
+          network_weight: 1
+          resolution:
+            - 512
+          controls: []
+          shrink_video_to_frames: true
+          num_frames: 1
+          do_i2v: true
+          flip_x: false
+          flip_y: false
+
+      train:
+        batch_size: 1
+        steps: 20
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        optimizer_params:
+          weight_decay: 0.0001
+        unload_text_encoder: false
+        cache_text_embeddings: false
+        lr: 0.00005
+        lr_scheduler: "cosine"
+        lr_scheduler_params:
+          total_iters: 20
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+        skip_first_sample: true
+        force_first_sample: false
+        disable_sampling: true
+        dtype: "bf16"
+        loss_type: "mse"
+
+      model:
+        name_or_path: "black-forest-labs/FLUX.2-klein-base-4B"
+        quantize: false
+        arch: "flux2_klein"
+        low_vram: false
+        model_kwargs: {}
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 20
+        width: 512
+        height: 512
+        prompts:
+          - "Dragonite portrait, <knhb-style>"
+        seed: 149
+        walk_seed: false
+        guidance_scale: 4
+        sample_steps: 20
+
+meta:
+  name: "[name]"
+  version: "1.0"
+
