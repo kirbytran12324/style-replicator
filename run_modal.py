@@ -48,11 +48,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+# Modal imports this module from /root while the repository is mounted under
+# /root/ai-toolkit for the ML image. Make that package root available before
+# importing shared toolkit modules.
+REMOTE_AITOOLKIT_PATH = "/root/ai-toolkit"
+if Path(REMOTE_AITOOLKIT_PATH).is_dir() and REMOTE_AITOOLKIT_PATH not in sys.path:
+    sys.path.insert(0, REMOTE_AITOOLKIT_PATH)
+
+from toolkit.generation_model_resolver import (
+    infer_generation_architecture,
+    list_generation_models,
+    load_and_activate_lora,
+    public_generation_model,
+    resolve_generation_model,
+)
+
 # ------------------------------------------------------------
 # Configuration & paths
 # ------------------------------------------------------------
 MOUNT_DIR = "/root/modal_output"
 CACHE_DIR = "/root/.cache/huggingface"
+DEFAULT_GENERATION_BASE_MODEL = "black-forest-labs/FLUX.1-dev"
+DIFFUSERS_VERSION = "0.38.0"
+TRANSFORMERS_VERSION = "4.57.6"
+TORCHAO_VERSION = "0.16.0"
 LOCAL_AITOOLKIT_PATH = Path(__file__).parent
 LOCAL_WHEELHOUSE_PATH = Path(__file__).parent / "wheelhouse"
 
@@ -114,6 +133,67 @@ def safe_commit(volume) -> bool:
     return True
 
 
+def _normalize_generation_base_model(base_model: Optional[str]) -> str:
+    if isinstance(base_model, str) and base_model.strip():
+        return base_model.strip()
+    return DEFAULT_GENERATION_BASE_MODEL
+
+
+def _load_generation_pipeline(
+        pipeline_cls: Any,
+        base_model: Optional[str],
+        torch_dtype: Any,
+        hf_token: Optional[str] = None,
+        cache_dir: str = CACHE_DIR,
+        hf_volume_obj: Any = None,
+):
+    normalized_base_model = _normalize_generation_base_model(base_model)
+
+    try:
+        logger.info("Attempting to load %s from local cache...", normalized_base_model)
+        pipe = pipeline_cls.from_pretrained(
+            normalized_base_model,
+            cache_dir=cache_dir,
+            local_files_only=True,
+            torch_dtype=torch_dtype,
+        )
+        logger.info("Loaded successfully from cache.")
+        return pipe
+    except Exception:
+        logger.info("Model not found in cache (or incomplete). Downloading %s...", normalized_base_model)
+
+    try:
+        pipe = pipeline_cls.from_pretrained(
+            normalized_base_model,
+            cache_dir=cache_dir,
+            local_files_only=False,
+            token=hf_token,
+            torch_dtype=torch_dtype,
+        )
+        if hf_volume_obj is not None:
+            hf_volume_obj.commit()
+        logger.info("Download complete and volume committed.")
+        return pipe
+    except Exception as download_error:
+        logger.error("Failed to download model: %s", download_error)
+        raise RuntimeError(f"Could not load or download model {normalized_base_model}. Check token/internet.")
+
+
+def _call_generation_pipeline(
+        pipe: Any,
+        prompt: str,
+        generator: Any,
+        guidance_scale: float = 3.5,
+        num_inference_steps: int = 20,
+):
+    return pipe(
+        prompt=prompt,
+        guidance_scale=guidance_scale,
+        num_inference_steps=num_inference_steps,
+        generator=generator,
+    )
+
+
 # ------------------------------------------------------------
 # Modal images: wheelhouse-first, Python 3.12
 # ------------------------------------------------------------
@@ -161,15 +241,12 @@ image = (
     .run_commands(
         "echo '=== Installing application packages (wheelhouse-first; PyPI fallback) ==='",
         "python -m pip install --prefer-binary --find-links /root/wheels --constraint /root/constraints.txt "
-        "transformers==4.55.0 python-dotenv accelerate ftfy safetensors albumentations lycoris-lora timm einops "
+        f"transformers=={TRANSFORMERS_VERSION} torchao=={TORCHAO_VERSION} python-dotenv accelerate ftfy safetensors albumentations lycoris-lora timm einops "
         "opencv-python-headless huggingface_hub peft lpips hf_transfer flatten_json pyyaml oyaml tensorboard "
         "toml albucore pydantic omegaconf k-diffusion controlnet_aux optimum-quanto python-slugify open_clip_torch "
-        "bitsandbytes pytorch_fid sentencepiece pytorch-wavelets matplotlib diffusers fastapi[standard] "
+        f"bitsandbytes pytorch_fid sentencepiece pytorch-wavelets matplotlib diffusers=={DIFFUSERS_VERSION} fastapi[standard] "
         "python-multipart modal psutil plotly opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp "
-        "opentelemetry-semantic-conventions || true"
-    )
-    .run_commands(
-        "pip install git+https://github.com/huggingface/diffusers.git",
+        "opentelemetry-semantic-conventions"
     )
     .env({
         "HUGGINGFACE_HUB_TOKEN": os.environ.get("HF_TOKEN", ""),
@@ -236,7 +313,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     num_samples: int = 1
     model_name: Optional[str] = None
-    base_model: Optional[str] = "black-forest-labs/FLUX.1-dev"
+    base_model: Optional[str] = DEFAULT_GENERATION_BASE_MODEL
     hf_token: Optional[str] = None
     seed: Optional[int] = None
 
@@ -245,6 +322,10 @@ class GenerateResponse(BaseModel):
     images: List[str]
     status: str
     seed: int
+    model_name: Optional[str] = None
+    base_model: str
+    checkpoint: Optional[str] = None
+    adapter_loaded: bool = False
 
 
 class TrainRequest(BaseModel):
@@ -1141,7 +1222,7 @@ async def start_training(request: TrainRequest, user_id: str = Depends(get_curre
         if not isinstance(proc, list) or len(proc) == 0:
             raise HTTPException(status_code=400, detail="Invalid config: 'config.process' must be a non-empty list")
 
-        # --- NEW LOGIC: Extract Base Model Name ---
+        # Extract Base Model Name ---
         base_model_path = None
         try:
             # Navigate the config structure: config -> process -> [0] -> model -> name_or_path
@@ -1219,35 +1300,10 @@ async def start_training(request: TrainRequest, user_id: str = Depends(get_curre
 @api.get("/api/models")
 async def list_models(user_id: str = Depends(get_current_user_id)):
     train_root = get_user_training_path(user_id)
-    if not train_root.exists():
-        return {"models": []}
-
-    models = []
-    # Iterate over training folders
-    for d in train_root.iterdir():
-        if d.is_dir() and not d.name.startswith("_"):
-            # Default fallback if config isn't found
-            base_model = "black-forest-labs/FLUX.1-dev"
-
-            # Construct path to the config file: trainings/{user}/_configs/{job_name}.yaml
-            config_path = train_root / "_configs" / f"{d.name}.yaml"
-
-            if config_path.exists():
-                try:
-                    # Read the yaml to find the model path
-                    with open(config_path, 'r') as f:
-                        cfg = yaml.safe_load(f)
-                        # Navigate: config -> process -> [0] -> model -> name_or_path
-                        base_model = cfg["config"]["process"][0]["model"]["name_or_path"]
-                except Exception as e:
-                    logger.warning(f"Error reading config for {d.name}: {e}")
-
-            # Return object with metadata
-            models.append({
-                "name": d.name,
-                "base_model": base_model
-            })
-
+    models = [
+        public_generation_model(model)
+        for model in list_generation_models(train_root)
+    ]
     return {"models": models}
 
 
@@ -1257,21 +1313,29 @@ async def list_models(user_id: str = Depends(get_current_user_id)):
 @api.post("/api/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest, user_id: str = Depends(get_current_user_id)):
     try:
-        # Determine LoRA path (existing logic)
         lora_path = None
+        model_name = None
+        checkpoint = None
+        base_model = _normalize_generation_base_model(request.base_model)
+        model_architecture = infer_generation_architecture({"name_or_path": base_model})
+
         if request.model_name:
-            model_folder = get_user_training_path(user_id) / safe_filename(request.model_name)
-            safetensors = sorted(
-                list(model_folder.glob("*.safetensors")),
-                key=lambda f: f.stat().st_mtime,
-                reverse=True,
-            )
-            if safetensors:
-                lora_path = str(safetensors[0])
+            model_name = request.model_name.strip()
+            if not model_name or safe_filename(model_name) != model_name:
+                raise HTTPException(status_code=400, detail="Invalid trained model name.")
+            resolved_model = resolve_generation_model(get_user_training_path(user_id), model_name)
+            if not resolved_model["selectable"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=resolved_model["status_reason"] or "Selected trained model is unavailable.",
+                )
+            base_model = resolved_model["base_model"]
+            model_architecture = resolved_model["architecture"]
+            checkpoint = resolved_model["checkpoint"]
+            lora_path = resolved_model["lora_path"]
 
         job_stub = uuid.uuid4().hex
         out_dir = f"{MOUNT_DIR}/generated/{user_id}/{job_stub}"
-        os.makedirs(out_dir, exist_ok=True)
 
         remote_generate_func = modal.Function.from_name(APP_NAME, "remote_generate")
 
@@ -1280,15 +1344,24 @@ async def generate(request: GenerateRequest, user_id: str = Depends(get_current_
             seed_input = f"{user_id}:{job_stub}:{request.prompt}"
             base_seed = int.from_bytes(hashlib.sha256(seed_input.encode("utf-8")).digest()[:4], "big")
 
-        saved_rel_paths = await remote_generate_func.remote.aio(
+        generation_result = await remote_generate_func.remote.aio(
             prompt=request.prompt,
             num_samples=request.num_samples,
             lora_path=lora_path,
             out_dir=out_dir,
-            base_model=request.base_model,
+            base_model=base_model,
+            model_architecture=model_architecture,
+            adapter_name=model_name,
             hf_token=request.hf_token,
             seed=base_seed,
         )
+
+        if not isinstance(generation_result, dict) or not isinstance(generation_result.get("paths"), list):
+            raise RuntimeError("Generation worker returned an invalid response.")
+        saved_rel_paths = generation_result["paths"]
+        adapter_loaded = bool(generation_result.get("adapter_loaded"))
+        if model_name and not adapter_loaded:
+            raise RuntimeError("Generation worker did not confirm that the selected LoRA was loaded.")
 
         safe_commit(model_volume)
         model_volume.reload()
@@ -1305,12 +1378,21 @@ async def generate(request: GenerateRequest, user_id: str = Depends(get_current_
             logger.info("Generated image URL: %s (path: %s)", url, rp)
             urls.append(url)
 
-        return GenerateResponse(images=urls, status="success", seed=base_seed)
+        return GenerateResponse(
+            images=urls,
+            status="success",
+            seed=base_seed,
+            model_name=model_name,
+            base_model=base_model,
+            checkpoint=checkpoint,
+            adapter_loaded=adapter_loaded,
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Generation failed: %s", e)
-        raise HTTPException(status_code=500, detail="Generation failed; check server logs")
+        detail = str(e).strip() or "Generation failed; check server logs."
+        raise HTTPException(status_code=502, detail=detail)
 
 
 # ------------------------------------------------------------
@@ -1487,11 +1569,12 @@ def preflight_imports(require_flux2_klein: bool = True) -> str:
 
     transformers = importlib.import_module("transformers")
     results["transformers_version"] = getattr(transformers, "__version__", "unknown")
+    results["transformers_version_matches"] = results["transformers_version"] == TRANSFORMERS_VERSION
     required_transformers = [
-        "ViTHybridImageProcessor",
-        "ViTHybridForImageClassification",
         "Qwen3ForCausalLM",
         "Qwen2TokenizerFast",
+        "Qwen3VLForConditionalGeneration",
+        "Qwen3VLProcessor",
     ]
     results["transformers_symbols"] = {
         name: hasattr(transformers, name)
@@ -1500,7 +1583,29 @@ def preflight_imports(require_flux2_klein: bool = True) -> str:
 
     diffusers = importlib.import_module("diffusers")
     results["diffusers_version"] = getattr(diffusers, "__version__", "unknown")
-    results["has_flux2_klein_pipeline"] = hasattr(diffusers, "Flux2KleinPipeline")
+    results["diffusers_version_matches"] = results["diffusers_version"] == DIFFUSERS_VERSION
+    required_diffusers = [
+        "DiffusionPipeline",
+        "FluxPipeline",
+        "Flux2KleinPipeline",
+    ]
+    results["diffusers_symbols"] = {
+        name: hasattr(diffusers, name)
+        for name in required_diffusers
+    }
+
+    torchao = importlib.import_module("torchao")
+    results["torchao_version"] = getattr(torchao, "__version__", "unknown")
+    results["torchao_version_matches"] = results["torchao_version"] == TORCHAO_VERSION
+    lora_loaders = importlib.import_module("diffusers.loaders")
+    required_lora_loaders = [
+        "FluxLoraLoaderMixin",
+        "Flux2LoraLoaderMixin",
+    ]
+    results["diffusers_lora_loader_symbols"] = {
+        name: hasattr(lora_loaders, name)
+        for name in required_lora_loaders
+    }
 
     importlib.import_module("toolkit.dataloader_mixins")
     importlib.import_module("toolkit.data_loader")
@@ -1517,8 +1622,22 @@ def preflight_imports(require_flux2_klein: bool = True) -> str:
         for name, present in results["transformers_symbols"].items()
         if not present
     ]
-    if require_flux2_klein and not results["has_flux2_klein_pipeline"]:
-        missing.append("diffusers.Flux2KleinPipeline")
+    if not results["transformers_version_matches"]:
+        missing.append(f"transformers=={TRANSFORMERS_VERSION}")
+    if not results["torchao_version_matches"]:
+        missing.append(f"torchao=={TORCHAO_VERSION}")
+    for name, present in results["diffusers_symbols"].items():
+        if name == "Flux2KleinPipeline" and not require_flux2_klein:
+            continue
+        if not present:
+            missing.append(f"diffusers.{name}")
+    for name, present in results["diffusers_lora_loader_symbols"].items():
+        if name == "Flux2LoraLoaderMixin" and not require_flux2_klein:
+            continue
+        if not present:
+            missing.append(f"diffusers.loaders.{name}")
+    if not results["diffusers_version_matches"]:
+        missing.append(f"diffusers=={DIFFUSERS_VERSION}")
 
     if missing:
         raise RuntimeError(f"Preflight missing required symbols: {missing}; versions={results}")
@@ -1947,65 +2066,78 @@ def remote_generate(
         num_samples: int = 1,
         lora_path: Optional[str] = None,
         out_dir: Optional[str] = None,
-        base_model: str = "black-forest-labs/FLUX.1-dev",
+        base_model: Optional[str] = DEFAULT_GENERATION_BASE_MODEL,
+        model_architecture: Optional[str] = None,
+        adapter_name: Optional[str] = None,
         hf_token: Optional[str] = None,
         seed: Optional[int] = None,
 ):
-    from diffusers import AutoPipelineForText2Image
+    import diffusers
+    import torchao
+    import transformers
+    from diffusers import DiffusionPipeline
     import torch
     import os
     import uuid
-    from PIL import Image
 
     # 1. AUTHENTICATION
     if hf_token:
         os.environ["HUGGINGFACE_HUB_TOKEN"] = hf_token
 
-    logger.info("remote_generate called prompt=%s model=%s", prompt, base_model)
+    base_model = _normalize_generation_base_model(base_model)
+    logger.info(
+        "remote_generate called model=%s architecture=%s checkpoint=%s diffusers=%s transformers=%s torchao=%s",
+        base_model,
+        model_architecture or "unknown",
+        Path(lora_path).name if lora_path else None,
+        getattr(diffusers, "__version__", "unknown"),
+        getattr(transformers, "__version__", "unknown"),
+        getattr(torchao, "__version__", "unknown"),
+    )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
 
     # 2. CACHING LOGIC: Try local load, failover to download
-    pipe = None
-    try:
-        logger.info(f"Attempting to load {base_model} from local cache...")
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            base_model,
-            cache_dir=CACHE_DIR,
-            local_files_only=True,
-            torch_dtype=torch_dtype
-        )
-        logger.info("Loaded successfully from cache.")
-    except Exception as e:
-        logger.info(f"Model not found in cache (or incomplete). Downloading {base_model}...")
-        try:
-            pipe = AutoPipelineForText2Image.from_pretrained(
-                base_model,
-                cache_dir=CACHE_DIR,
-                local_files_only=False,  # Allow download
-                token=hf_token,  # Use token for gated models
-                torch_dtype=torch_dtype
-            )
-            # CRITICAL: Save the downloaded model to persistent storage
-            hf_volume.commit()
-            logger.info("Download complete and volume committed.")
-        except Exception as download_error:
-            logger.error(f"Failed to download model: {download_error}")
-            raise RuntimeError(f"Could not load or download model {base_model}. Check token/internet.")
+    pipe = _load_generation_pipeline(
+        DiffusionPipeline,
+        base_model,
+        torch_dtype,
+        hf_token=hf_token,
+        hf_volume_obj=hf_volume,
+    )
 
     pipe.to(device)
 
     # 3. LORA LOADING
-    if lora_path and os.path.exists(lora_path):
-        logger.info("Loading LoRA: %s", lora_path)
+    adapter_loaded = False
+    active_adapter_name = None
+    if lora_path:
+        resolved_adapter_name = adapter_name or "trained_lora"
+        logger.info("Loading LoRA checkpoint=%s adapter=%s", Path(lora_path).name, resolved_adapter_name)
         try:
-            if hasattr(pipe, "load_lora_weights"):
-                pipe.load_lora_weights(lora_path)
-            elif hasattr(pipe.unet, "load_attn_procs"):
-                pipe.unet.load_attn_procs(lora_path)
-        except Exception as e:
-            logger.warning("Error loading LoRA: %s", e)
+            adapter_loaded = load_and_activate_lora(
+                pipe,
+                lora_path,
+                resolved_adapter_name,
+                adapter_weight=1.0,
+            )
+        except Exception:
+            logger.exception(
+                "LoRA activation failed model=%s architecture=%s checkpoint=%s",
+                base_model,
+                model_architecture or "unknown",
+                Path(lora_path).name,
+            )
+            raise
+        logger.info(
+            "LoRA activated model=%s architecture=%s checkpoint=%s adapter=%s weight=1.0",
+            base_model,
+            model_architecture or "unknown",
+            Path(lora_path).name,
+            resolved_adapter_name,
+        )
+        active_adapter_name = resolved_adapter_name
 
     # 4. GENERATION LOOP
     if out_dir is None:
@@ -2022,11 +2154,10 @@ def remote_generate(
         generator = torch.Generator(device=device).manual_seed(current_seed)
 
         logger.info(f"Generating sample {i + 1}/{num_samples} with seed {current_seed}...")
-        out = pipe(
+        out = _call_generation_pipeline(
+            pipe,
             prompt,
-            guidance_scale=3.5,
-            num_inference_steps=20,
-            generator=generator
+            generator,
         )
         pil_img = out.images[0]
 
@@ -2046,7 +2177,11 @@ def remote_generate(
     except Exception as e:
         logger.warning("model_volume.commit() failed after generation: %s", e)
 
-    return saved_rel_paths
+    return {
+        "paths": saved_rel_paths,
+        "adapter_loaded": adapter_loaded,
+        "adapter_name": active_adapter_name,
+    }
 
 
 # ------------------------------------------------------------

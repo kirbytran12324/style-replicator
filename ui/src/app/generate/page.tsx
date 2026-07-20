@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiClient } from '@/utils/api';
 import { Button } from '@headlessui/react';
 import { TextInput, NumberInput, SelectInput } from '@/components/formInputs';
@@ -12,8 +12,6 @@ import useModelList from '@/hooks/useModelList';
 import useSettings from '@/hooks/useSettings';
 
 export default function GeneratePage() {
-  // We assume models is now a list of objects { name: string, base_model: string }
-  // based on the previous step's plan.
   const { models, isLoading: modelsLoading } = useModelList();
   const { settings } = useSettings();
 
@@ -22,35 +20,42 @@ export default function GeneratePage() {
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [seed, setSeed] = useState<number | null>(null);
 
-  // New state for the base model, defaulting to Flux
   const [baseModel, setBaseModel] = useState('black-forest-labs/FLUX.1-dev');
 
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Convert models array to options format
-  // Note: We access m.name since models are now objects
-  const modelOptions = [
-    { value: '', label: 'None (Base Model Only)' },
-    ...models.map(m => ({ value: m.name, label: m.name }))
-  ];
+  const selectedModelInfo = useMemo(
+    () => models.find(model => model.name === selectedModel),
+    [models, selectedModel],
+  );
 
-  // Auto-update the Base Model input when a LoRA is selected
+  const modelOptions = useMemo(
+    () => [
+      { value: '', label: 'None (Base Model Only)' },
+      ...models.map(model => ({
+        value: model.name,
+        label: model.selectable
+          ? model.name
+          : `${model.name} — unavailable: ${model.status_reason || model.status}`,
+        isDisabled: !model.selectable,
+      })),
+    ],
+    [models],
+  );
+
   useEffect(() => {
     if (!selectedModel) return;
-
-    // Find the metadata for the selected LoRA
-    const modelInfo = models.find(m => m.name === selectedModel);
-
-    // If we found it and it has a base_model recorded, update the input
-    if (modelInfo && modelInfo.base_model) {
-        setBaseModel(modelInfo.base_model);
+    if (selectedModelInfo?.base_model) {
+      setBaseModel(selectedModelInfo.base_model);
     }
-  }, [selectedModel, models]);
+  }, [selectedModel, selectedModelInfo]);
+
+  const selectedModelUnavailable = Boolean(selectedModel && !selectedModelInfo?.selectable);
 
   const handleGenerate = async () => {
-    if (!prompt) return;
+    if (!prompt || selectedModelUnavailable) return;
     setLoading(true);
     setError(null);
     setImages([]);
@@ -81,7 +86,8 @@ export default function GeneratePage() {
       }
     } catch (e: any) {
       console.error(e);
-      setError(e.response?.data?.detail || 'Failed to generate image.');
+      const detail = e.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : detail?.message || 'Failed to generate image.');
     } finally {
       setLoading(false);
     }
@@ -105,10 +111,12 @@ export default function GeneratePage() {
                    value={baseModel}
                    onChange={setBaseModel}
                    placeholder="black-forest-labs/FLUX.1-dev"
-                   disabled={loading}
+                   disabled={loading || Boolean(selectedModel)}
                  />
                  <p className="text-xs text-gray-500 mt-1">
-                   If using a LoRA, this will auto-fill with the training model.
+                   {selectedModel
+                     ? 'Locked to the base model recorded by the selected training job.'
+                     : 'Used directly when generating without a trained LoRA.'}
                  </p>
                </div>
 
@@ -119,10 +127,20 @@ export default function GeneratePage() {
                    value={selectedModel}
                    onChange={setSelectedModel}
                    options={modelOptions}
-                   disabled={modelsLoading}
+                   disabled={modelsLoading || loading}
                    placeholder={modelsLoading ? "Loading models..." : "Select a model"}
                  />
                  {modelsLoading && <p className="text-xs text-blue-400 mt-1">Fetching models...</p>}
+                 {selectedModelInfo?.selectable && (
+                   <p className="text-xs text-green-400 mt-1">
+                     Ready: {selectedModelInfo.architecture} · {selectedModelInfo.checkpoint}
+                   </p>
+                 )}
+                 {selectedModelUnavailable && (
+                   <p className="text-xs text-red-400 mt-1">
+                     {selectedModelInfo?.status_reason || 'This trained model is unavailable for generation.'}
+                   </p>
+                 )}
                </div>
              </div>
 
@@ -167,10 +185,10 @@ export default function GeneratePage() {
              <div className="flex justify-end pt-2">
                <Button
                  onClick={handleGenerate}
-                 disabled={loading || !prompt}
+                 disabled={loading || !prompt || selectedModelUnavailable}
                  className={`
                    flex items-center px-6 py-2.5 rounded-lg font-medium transition-all
-                   ${loading || !prompt 
+                   ${loading || !prompt || selectedModelUnavailable
                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
                      : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40'}
                  `}

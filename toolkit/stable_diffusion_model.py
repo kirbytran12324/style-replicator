@@ -912,8 +912,8 @@ class StableDiffusion:
         elif self.model_config.is_flux2_klein:
             if Flux2KleinPipeline is None:
                 raise ImportError(
-                    "Flux2KleinPipeline not found. Install the dev version of diffusers: "
-                    "pip install git+https://github.com/huggingface/diffusers.git"
+                    "Flux2KleinPipeline not found. Install a compatible release: "
+                    "pip install diffusers==0.38.0 transformers==4.57.6"
                 )
             self.print_and_status_update("Loading Flux.2 Klein model via from_pretrained")
             base_model_path = self.model_config.name_or_path_original

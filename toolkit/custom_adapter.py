@@ -47,7 +47,11 @@ from transformers import (
 )
 from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAFEVisionModel
 
-from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
+try:
+    from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
+except ImportError:
+    ViTHybridImageProcessor = None
+    ViTHybridForImageClassification = None
 
 from transformers import ViTFeatureExtractor, ViTForImageClassification
 
@@ -407,6 +411,11 @@ class CustomAdapter(torch.nn.Module):
                 use_safetensors=True,
             ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'vit-hybrid':
+            if ViTHybridImageProcessor is None or ViTHybridForImageClassification is None:
+                raise ImportError(
+                    "ViT-Hybrid custom adapters require a Transformers release that still provides "
+                    "ViTHybridImageProcessor and ViTHybridForImageClassification."
+                )
             try:
                 self.image_processor = ViTHybridImageProcessor.from_pretrained(adapter_config.image_encoder_path)
             except EnvironmentError:
