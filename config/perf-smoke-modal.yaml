@@ -1,7 +1,7 @@
 ---
 job: "train"
 config:
-  name: "perf-smoke-modal"
+  name: "perf-smoke-test"
   training_folder: "output"
   process:
     - type: "sd_trainer"
@@ -55,7 +55,7 @@ config:
 
       train:
         batch_size: 1
-        steps: 20
+        steps: 30
         gradient_accumulation: 1
         train_unet: true
         train_text_encoder: false
@@ -69,7 +69,7 @@ config:
         lr: 0.00005
         lr_scheduler: "cosine"
         lr_scheduler_params:
-          total_iters: 20
+          total_iters: 30
         ema_config:
           use_ema: false
           ema_decay: 0.99

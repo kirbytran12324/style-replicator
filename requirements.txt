@@ -1,10 +1,10 @@
 modal
 fastapi
-torchao==0.10.0
+torchao==0.16.0
 safetensors
 git+https://github.com/jaretburkett/easy_dwpose.git
-git+https://github.com/huggingface/diffusers.git
-transformers==4.55.0
+diffusers==0.38.0
+transformers==4.57.6
 lycoris-lora==1.8.3
 flatten_json
 pyyaml

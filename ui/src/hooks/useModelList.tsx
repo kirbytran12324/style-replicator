@@ -5,7 +5,13 @@ import { apiClient } from '@/utils/api';
 
 export interface ModelInfo {
   name: string;
-  base_model: string;
+  base_model: string | null;
+  architecture: string;
+  network_type: string;
+  checkpoint: string | null;
+  selectable: boolean;
+  status: string;
+  status_reason: string | null;
 }
 
 export default function useModelList() {
@@ -18,7 +24,6 @@ export default function useModelList() {
     apiClient.get('/api/models')
       .then(res => {
         if (res.data.models) {
-          // Backend will now return objects like [{ name: 'my-lora', base_model: 'flux-dev' }]
           setModels(res.data.models);
         }
       })
